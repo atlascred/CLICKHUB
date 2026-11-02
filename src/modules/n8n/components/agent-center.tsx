@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useMemo, useState, useEffect } from "react";
 import {
   Bot, BrainCircuit, Check, ChevronRight, CircleDollarSign, GripVertical,
   KeyRound, Pencil, Plus, Save, Search, Trash2, Workflow, X,
@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useApiResource } from "@/hooks/use-api-resource";
 
 type FlowStep = { id: string; title: string; message: string; state: string };
-type PlanItem = { id: string; name: string; speed: string; price: string | number; description: string | null; active: boolean; order: number };
+type PlanItem = { id: string; name: string; speed: string; price: string | number; description: string | null; active: boolean; order: number; agents?: Array<{ id: string }> };
 type AgentItem = {
   id: string; name: string; gender: "MALE" | "FEMALE"; personality: string; rules: Record<string, unknown>;
   flow: { steps?: FlowStep[] | string[] }; active: boolean; minTypingSeconds: number; maxTypingSeconds: number;
@@ -23,7 +23,7 @@ type AgentItem = {
 type Tab = "agents" | "plans" | "openai" | "flow";
 
 const defaultSteps: FlowStep[] = [
-  { id: "start", state: "START", title: "Entrada Meta Ads", message: "Olá, bom dia/boa tarde/boa noite! Eu sou a {{agente}}, consultora de planos de internet fibra. Trabalho com planos da Claro, Giga+ e Desktop e vou te ajudar a encontrar a melhor opção para sua casa. Para começar, pode me informar o CEP da instalação?" },
+  { id: "start", state: "START", title: "Entrada Meta Ads", message: "Olá, bom dia/boa tarde/boa noite! Eu sou a {{agente}}, consultora de planos de internet fibra. Vou iniciar o seu atendimento, tudo bem? O primeiro passo é eu verificar se tem disponibilidade para sua casa. 🛜✨ Para começar, pode me informar o CEP da instalação?" },
   { id: "cep", state: "ASK_CEP", title: "Localizar CEP", message: "Localizar o CEP com ViaCEP quando possível e continuar o cadastro. Não afirmar cobertura confirmada nessa etapa." },
   { id: "street-number", state: "ASK_STREET_NUMBER", title: "Número da residência", message: "Com o CEP localizado ou aceito, pedir o número da residência." },
   { id: "complement", state: "ASK_COMPLEMENT", title: "Complemento", message: "Perguntar se há complemento, como casa, apartamento ou bloco." },
@@ -42,6 +42,8 @@ const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL
 export function AgentCenter() {
   const plans = useApiResource<PlanItem[]>("/api/plans");
   const agents = useApiResource<AgentItem[]>("/api/agents");
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  useEffect(() => { if (!selectedAgentId && agents.data?.length) setSelectedAgentId(agents.data.find(a => a.zapiInstanceId === "CLICK")?.id ?? agents.data[0].id); }, [agents.data, selectedAgentId]);
   const [tab, setTab] = useState<Tab>("agents");
   const [modal, setModal] = useState<null | "agent" | "plan" | "openai">(null);
   const [editingAgent, setEditingAgent] = useState<AgentItem | null>(null);
@@ -52,8 +54,8 @@ export function AgentCenter() {
 
   const filteredAgents = useMemo(() => (agents.data ?? []).filter((item) =>
     `${item.name} ${item.personality}`.toLowerCase().includes(query.toLowerCase())), [agents.data, query]);
-  const filteredPlans = useMemo(() => (plans.data ?? []).filter((item) =>
-    `${item.name} ${item.description ?? ""}`.toLowerCase().includes(query.toLowerCase())), [plans.data, query]);
+  const filteredPlans = useMemo(() => (plans.data ?? []).filter(item => item.agents?.some(a => a.id === selectedAgentId)).filter((item) =>
+    `${item.name} ${item.description ?? ""}`.toLowerCase().includes(query.toLowerCase())), [plans.data, query, selectedAgentId]);
 
   async function request(url: string, method: string, body?: unknown) {
     setSaving(true); setNotice("");
@@ -69,7 +71,7 @@ export function AgentCenter() {
     await agents.refresh(); setModal(null); setEditingAgent(null);
   }
   async function savePlan(payload: Record<string, unknown>) {
-    await request(editingPlan ? `/api/plans/${editingPlan.id}` : "/api/plans", editingPlan ? "PUT" : "POST", payload);
+    await request(editingPlan ? `/api/plans/${editingPlan.id}` : "/api/plans", editingPlan ? "PUT" : "POST", { ...payload, agentId: selectedAgentId });
     await plans.refresh(); setModal(null); setEditingPlan(null);
   }
   async function remove(kind: "agents" | "plans", id: string) {
@@ -108,6 +110,9 @@ export function AgentCenter() {
       {!filteredAgents.length && <Empty text="Nenhum agente cadastrado" />}
     </div>}
 
+    {tab === "plans" && <label className="block text-sm">Planos do agente <select aria-label="Agente dos planos" className="ml-2 rounded-md border bg-background p-2" value={selectedAgentId} onChange={e => { setSelectedAgentId(e.target.value); setModal(null); setEditingPlan(null); }}>
+      {(agents.data ?? []).map(a => <option key={a.id} value={a.id}>{a.zapiInstanceId || a.name}</option>)}
+    </select></label>}
     {tab === "plans" && <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {filteredPlans.map((plan) => <PlanCard key={plan.id} plan={plan}
         onEdit={() => { setEditingPlan(plan); setModal("plan"); }} onDelete={() => remove("plans", plan.id)} />)}
@@ -119,7 +124,7 @@ export function AgentCenter() {
       await request(`/api/agents/${agent.id}`, "PUT", { flow: { steps } }); await agents.refresh();
     }} />}
 
-    {modal === "agent" && <AgentModal agent={editingAgent} plans={plans.data ?? []} saving={saving} onClose={() => setModal(null)} onSave={saveAgent} />}
+    {modal === "agent" && <AgentModal agent={editingAgent} plans={(plans.data ?? []).filter(p => !p.agents?.length || p.agents.some(a => a.id === editingAgent?.id))} saving={saving} onClose={() => setModal(null)} onSave={saveAgent} />}
     {modal === "plan" && <PlanModal plan={editingPlan} saving={saving} onClose={() => setModal(null)} onSave={savePlan} />}
     {modal === "openai" && <OpenAiCredentials saving={saving} onClose={() => setModal(null)} onSave={async (payload) => { await request("/api/settings", "PUT", payload); setModal(null); }} />}
   </div>;
@@ -131,7 +136,7 @@ function AgentCard({ agent, onEdit, onDelete }: { agent: AgentItem; onEdit: () =
       <div className="flex items-start justify-between gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-md bg-primary/15"><Bot className="h-6 w-6 text-primary" /></div>
         <span className={`rounded-full px-2 py-1 text-xs ${agent.active ? "bg-emerald-100 text-emerald-700" : "bg-muted text-muted-foreground"}`}>{agent.active ? "Ativo" : "Inativo"}</span></div>
       <h3 className="mt-4 font-semibold">{agent.name}</h3><p className="mt-1 line-clamp-2 min-h-10 text-sm text-muted-foreground">{agent.personality}</p>
-      <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>{agent.gender === "FEMALE" ? "Feminino" : "Masculino"}</span><span>•</span><span>{agent.plans.length} planos</span><span>•</span><span>{agent.zapiInstanceId ? "Z-API configurada" : "Z-API pendente"}</span></div>
+      <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>{agent.gender === "FEMALE" ? "Feminino" : "Masculino"}</span><span>•</span><span>{agent.plans.length} planos</span><span>•</span><span>{agent.zapiInstanceId || "WhatsApp não vinculado"}</span></div>
     </button>
     <div className="flex justify-end gap-2 border-t px-4 py-3"><Button size="sm" variant="ghost" onClick={onEdit}><Pencil className="h-4 w-4" />Editar</Button><Button size="icon" variant="ghost" aria-label="Excluir agente" onClick={onDelete}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>
   </CardContent></Card>;
@@ -188,7 +193,7 @@ function AgentModal({ agent, plans, saving, onClose, onSave }: { agent: AgentIte
   }); }
   return <Modal title={agent ? `Editar ${agent.name}` : "Cadastrar agente"} onClose={onClose}><form className="space-y-5" onSubmit={submit}>
     <Section title="Identidade e inteligência"><div className="grid gap-3 sm:grid-cols-2"><Input name="name" defaultValue={agent?.name ?? ""} placeholder="Nome do chatbot" required /><select name="gender" defaultValue={agent?.gender ?? "MALE"} className="h-10 rounded-md border bg-background px-3 text-sm"><option value="MALE">Masculino</option><option value="FEMALE">Feminino</option></select></div><Textarea className="min-h-28" name="personality" defaultValue={agent?.personality ?? ""} placeholder="Personalidade do chatbot" required /><Textarea className="min-h-28" value={rules} onChange={(e) => setRules(e.target.value)} placeholder="Uma regra por linha" /><Input name="openAiModel" defaultValue={agent?.openAiModel ?? "gpt-4o-mini"} placeholder="Modelo OpenAI" /></Section>
-    <Section title="Credenciais Z-API"><div className="grid gap-3 sm:grid-cols-2"><Input name="zapiInstanceId" defaultValue={agent?.zapiInstanceId ?? ""} placeholder="Instance ID" /><Input name="zapiToken" defaultValue={agent?.zapiToken ?? ""} type="password" placeholder={agent?.zapiToken ? "Token configurado" : "Token da instância"} /><Input name="zapiClientToken" defaultValue={agent?.zapiClientToken ?? ""} type="password" placeholder={agent?.zapiClientToken ? "Client Token configurado" : "Client Token da conta Z-API"} /><Input name="zapiWhatsappNumber" defaultValue={agent?.zapiWhatsappNumber ?? ""} placeholder="Número do WhatsApp" /><Input className="sm:col-span-2" name="zapiBaseUrl" defaultValue={agent?.zapiBaseUrl ?? "https://api.z-api.io"} placeholder="URL base Z-API" /></div></Section>
+    <Section title="Instância WhatsApp e integração"><div className="grid gap-3 sm:grid-cols-2"><Input name="zapiInstanceId" defaultValue={agent?.zapiInstanceId ?? ""} placeholder="Nome exato da instância WhatsApp" /><Input name="zapiToken" defaultValue={agent?.zapiToken ?? ""} type="password" placeholder={agent?.zapiToken ? "Token configurado" : "Token da instância"} /><Input name="zapiClientToken" defaultValue={agent?.zapiClientToken ?? ""} type="password" placeholder={agent?.zapiClientToken ? "Client Token configurado" : "Client Token da conta Z-API"} /><Input name="zapiWhatsappNumber" defaultValue={agent?.zapiWhatsappNumber ?? ""} placeholder="Número do WhatsApp" /><Input className="sm:col-span-2" name="zapiBaseUrl" defaultValue={agent?.zapiBaseUrl ?? "https://api.z-api.io"} placeholder="URL base Z-API" /></div></Section>
     <Section title="Planos atendidos"><div className="grid gap-2 sm:grid-cols-2">{plans.map((plan) => <label key={plan.id} className="flex items-center gap-2 rounded-md border p-3 text-sm"><input name="planIds" value={plan.id} type="checkbox" defaultChecked={agent?.plans.some((item) => item.id === plan.id)} />{plan.name} · {money.format(Number(plan.price))}</label>)}</div></Section>
     <Section title="Comportamento"><div className="grid gap-3 sm:grid-cols-2"><Input name="minTypingSeconds" type="number" min="0" defaultValue={agent?.minTypingSeconds ?? 2} placeholder="Tempo mínimo" /><Input name="maxTypingSeconds" type="number" min="1" defaultValue={agent?.maxTypingSeconds ?? 4} placeholder="Tempo máximo" /></div><div className="grid gap-2 sm:grid-cols-2"><CheckBox name="active" label="Agente ativo" checked={agent?.active ?? true} /><CheckBox name="enableReadReceipt" label="Confirmar leitura" checked={agent?.enableReadReceipt ?? true} /><CheckBox name="enableTyping" label="Simular digitação" checked={agent?.enableTyping ?? true} /><CheckBox name="enableReplyDelay" label="Atraso humanizado" checked={agent?.enableReplyDelay ?? true} /></div></Section>
     <Button className="w-full" disabled={saving}><Save className="h-4 w-4" />{saving ? "Salvando..." : "Salvar agente"}</Button>

@@ -28,7 +28,7 @@ const flow = {
       state: "START",
       title: "Entrada Meta Ads",
       message:
-        "Olá, bom dia/boa tarde/boa noite! Eu sou a Lily, consultora de planos de internet fibra. Trabalho com planos da Claro, Giga+ e Desktop e vou te ajudar a encontrar a melhor opção para sua casa. Para começar, pode me informar o CEP da instalação?",
+        "Olá, bom dia/boa tarde/boa noite! Eu sou a Lily, consultora de planos de internet fibra. Vou iniciar o seu atendimento, tudo bem? O primeiro passo é eu verificar se tem disponibilidade para sua casa. 🛜✨ Para começar, pode me informar o CEP da instalação?",
     },
     {
       id: "cep",
@@ -112,7 +112,7 @@ async function syncPlans() {
 
 async function syncLily(planIds: string[]) {
   const existing = await prisma.agent.findFirst({
-    where: { OR: [{ name: "Cris" }, { name: "Joana" }, { name: "Lily" }], deletedAt: null },
+    where: { zapiInstanceId: process.env.EVOLUTION_INSTANCE || "CLICK", deletedAt: null },
     select: { id: true },
   });
 
@@ -130,7 +130,7 @@ async function syncLily(planIds: string[]) {
     enableReplyDelay: true,
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
     zapiBaseUrl: process.env.ZAPI_BASE_URL ?? "https://api.z-api.io",
-    zapiInstanceId: process.env.ZAPI_INSTANCE_ID ?? "",
+    zapiInstanceId: process.env.EVOLUTION_INSTANCE || process.env.ZAPI_INSTANCE_ID || "CLICK",
     zapiToken: process.env.ZAPI_TOKEN ?? "",
     zapiClientToken: process.env.ZAPI_CLIENT_TOKEN ?? "",
     zapiWhatsappNumber: process.env.ZAPI_WHATSAPP_NUMBER ?? "",
@@ -157,6 +157,8 @@ async function syncLily(planIds: string[]) {
 }
 
 async function main() {
+  const existingAgents = await prisma.agent.count({ where: { deletedAt: null } });
+  if (!existingAgents) await syncLily([]);
   const activePlans = await syncPlans();
   const lily = await syncLily(activePlans.map((plan) => plan.id));
 

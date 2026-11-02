@@ -1,3 +1,5 @@
+import { currentEvolutionInstance, scopedEvolutionId } from "@/services/evolution-context";
+import { ChatbotRepository } from "@/repositories/chatbot.repository";
 import "server-only";
 
 import type { Prisma } from "@prisma/client";
@@ -10,7 +12,10 @@ import { prisma } from "@/lib/prisma";
 import { checkEvolutionWhatsAppNumber, sendEvolutionMediaMessage, sendEvolutionTextMessage } from "@/services/evolution";
 import { checkMetaWhatsAppNumber, isMetaWhatsAppEnabled, sendMetaMediaMessage, sendMetaTemplateMessage, sendMetaTextMessage } from "@/services/meta-whatsapp";
 
-const BROADCAST_HISTORY_KEY = "whatsappBroadcastDispatches";
+function broadcastHistoryKey() {
+  if (isMetaWhatsAppEnabled() || currentEvolutionInstance().instanceName === process.env.EVOLUTION_INSTANCE) return "whatsappBroadcastDispatches";
+  return `chatbot:broadcast:${currentEvolutionInstance().instanceName}`;
+}
 
 export type BroadcastRecipientStatus = {
   phone: string;
@@ -246,7 +251,8 @@ export async function processBroadcastMessage(message: BroadcastProcessMessage) 
           fileName: message.fileName,
       })
       : await sendEvolutionTextMessage({ to: message.phone, message: message.message, delayTypingSeconds: 2 });
-    const providerId = resolveWhatsAppMessageId(result);
+    const rawProviderId = resolveWhatsAppMessageId(result);
+    const providerId = rawProviderId && !usingMeta ? scopedEvolutionId(currentEvolutionInstance().instanceName, rawProviderId) : rawProviderId;
     const conversation = await findOrCreateBroadcastConversation({
       phone: message.phone,
       ownerUserId: message.ownerUserId,
@@ -343,14 +349,14 @@ async function findBroadcastDispatch(id: string) {
 }
 
 async function readBroadcastHistory() {
-  const setting = await prisma.appSetting.findUnique({ where: { key: BROADCAST_HISTORY_KEY } });
+  const setting = await prisma.appSetting.findUnique({ where: { key: broadcastHistoryKey() } });
   return normalizeBroadcastHistory(setting?.value);
 }
 
 async function writeBroadcastHistory(history: BroadcastDispatchRecord[]) {
   await prisma.appSetting.upsert({
-    where: { key: BROADCAST_HISTORY_KEY },
-    create: { key: BROADCAST_HISTORY_KEY, value: normalizeJson(history) },
+    where: { key: broadcastHistoryKey() },
+    create: { key: broadcastHistoryKey(), value: normalizeJson(history) },
     update: { value: normalizeJson(history) },
   });
 }
@@ -454,8 +460,9 @@ function resolveDispatchStatus(summary: ReturnType<typeof summarizeStatuses>) {
 }
 
 async function findOrCreateBroadcastConversation(input: { phone: string; ownerUserId?: string }) {
+  const agent = isMetaWhatsAppEnabled() ? null : await new ChatbotRepository().getAgentByInstance(currentEvolutionInstance().instanceName, true);
   const existing = await prisma.chatConversation.findFirst({
-    where: { phone: input.phone, deletedAt: null },
+    where: { phone: input.phone, agentId: agent?.id ?? null, deletedAt: null },
     orderBy: { updatedAt: "desc" },
   });
   if (existing) return existing;
@@ -463,6 +470,7 @@ async function findOrCreateBroadcastConversation(input: { phone: string; ownerUs
   return prisma.chatConversation.create({
     data: {
       phone: input.phone,
+      agentId: agent?.id,
       state: "START",
       ownerUserId: input.ownerUserId,
       memory: {

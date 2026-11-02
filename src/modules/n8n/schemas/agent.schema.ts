@@ -14,7 +14,7 @@ export const createAgentSchema = z.object({
   enableReplyDelay: z.boolean().optional(),
   openAiModel: z.string().optional(),
   zapiBaseUrl: z.string().optional(),
-  zapiInstanceId: z.string().optional(),
+  zapiInstanceId: z.string().trim().optional(),
   zapiToken: z.string().optional(),
   zapiClientToken: z.string().optional(),
   zapiWhatsappNumber: z.string().optional(),

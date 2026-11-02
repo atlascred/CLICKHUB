@@ -17,3 +17,8 @@ data
 CLARO FACEBOOK PARTES
 CLARO FACEBOOK UNICOS PARTES
 CLIK CEPS
+
+.backups
+.test-output
+tests
+*.tsbuildinfo

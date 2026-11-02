@@ -108,6 +108,10 @@ type BroadcastDispatch = {
 };
 
 export function ConversationsPanel() {
+  const [whatsappAgents, setWhatsappAgents] = useState<Array<{ id: string; name: string; instanceName: string | null }>>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const selectedAgentRef = useRef("");
+  selectedAgentRef.current = selectedAgentId;
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeId, setActiveId] = useState("");
   const [newConversation, setNewConversation] = useState(emptyNewConversation);
@@ -139,10 +143,13 @@ export function ConversationsPanel() {
   const remainingToSchedule = bulkPhoneCount - scheduledQuantity;
 
   async function refreshConversations(nextActiveId?: string) {
+    const requestedAgent = selectedAgentId;
+    if (!requestedAgent) return;
     setError("");
     setRefreshing(true);
-    const response = await fetch("/api/conversations", { cache: "no-store" });
+    const response = await fetch(`/api/conversations?agentId=${encodeURIComponent(requestedAgent)}`, { cache: "no-store" });
     const result = await response.json() as ApiResult<ChatConversation[]>;
+    if (selectedAgentRef.current !== requestedAgent) return;
     if (result.status !== "success") {
       setError(result.message);
       setLoading(false);
@@ -161,8 +168,17 @@ export function ConversationsPanel() {
   }
 
   useEffect(() => {
-    void refreshConversations();
+    void fetch("/api/whatsapp/agents", { cache: "no-store" }).then(r => r.json()).then(result => {
+      if (result.status !== "success") throw new Error(result.message);
+      setWhatsappAgents(result.data);
+      setSelectedAgentId(result.data.find((a: { instanceName: string }) => a.instanceName === "CLICK")?.id ?? result.data[0]?.id ?? "");
+    }).catch(e => { setError(e.message); setLoading(false); });
   }, []);
+  useEffect(() => {
+    setConversations([]); setActiveId(""); setMessage(""); setNewConversation(emptyNewConversation);
+    setCreateModalOpen(false); setHistoryModalOpen(false); setBroadcastHistory([]);
+    void refreshConversations();
+  }, [selectedAgentId]);
 
   useEffect(() => {
     if (!createModalOpen && !historyModalOpen) return;
@@ -186,6 +202,7 @@ export function ConversationsPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          agentId: selectedAgentId,
           phones: newConversation.phones,
           message: newConversation.bulkMessage,
           media: newConversation.bulkImage,
@@ -221,6 +238,7 @@ export function ConversationsPanel() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(hasInitialMessage || hasInitialImage
         ? {
+            agentId: selectedAgentId,
             to: newConversation.phone,
             message: newConversation.message,
             media: newConversation.image,
@@ -231,6 +249,7 @@ export function ConversationsPanel() {
             tags: unitaryTags,
           }
         : {
+            agentId: selectedAgentId,
             phone: newConversation.phone,
             name: newConversation.name,
             tags: unitaryTags,
@@ -249,8 +268,10 @@ export function ConversationsPanel() {
   }
 
   async function refreshBroadcastHistory() {
-    const response = await fetch("/api/whatsapp/broadcast", { cache: "no-store" });
+    const requestedAgent = selectedAgentId;
+    const response = await fetch(`/api/whatsapp/broadcast?agentId=${encodeURIComponent(selectedAgentId)}`, { cache: "no-store" });
     const result = await response.json() as ApiResult<BroadcastDispatch[]>;
+    if (selectedAgentRef.current !== requestedAgent) return;
     if (result.status === "success") {
       setBroadcastHistory(result.data);
     }
@@ -312,7 +333,7 @@ export function ConversationsPanel() {
   async function deleteHistory(ids?: string[]) {
     if (ids?.length && !window.confirm(`Excluir ${ids.length} registro(s) do historico? As conversas nao serao apagadas.`)) return;
     if (!ids?.length && !window.confirm("Excluir todo o historico de disparos? As conversas nao serao apagadas.")) return;
-    const response = await fetch(ids?.length ? "/api/whatsapp/broadcast" : "/api/whatsapp/broadcast?all=1", {
+    const response = await fetch(`/api/whatsapp/broadcast?agentId=${encodeURIComponent(selectedAgentId)}${ids?.length ? "" : "&all=1"}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: ids?.length ? JSON.stringify({ ids }) : undefined,
@@ -389,6 +410,7 @@ export function ConversationsPanel() {
       body: JSON.stringify({
         to: active.phone,
         message: outgoingText,
+        agentId: selectedAgentId,
         conversationId: active.id,
         contactName: getConversationName(active),
       }),
@@ -527,6 +549,9 @@ export function ConversationsPanel() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <CardTitle>Conversas</CardTitle>
+              <select aria-label="Agente WhatsApp" className="mt-2 max-w-full rounded-md border bg-background px-2 py-1 text-sm" value={selectedAgentId} disabled={sending || submittingConversation} onChange={e => setSelectedAgentId(e.target.value)}>
+                {whatsappAgents.map(agent => <option key={agent.id} value={agent.id}>{agent.instanceName || agent.name}</option>)}
+              </select>
               <p className="mt-1 text-sm text-muted-foreground">
                 {refreshing && !loading ? "Atualizando em tempo real..." : "Mensagens em tempo real"}
               </p>

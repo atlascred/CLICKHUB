@@ -1,3 +1,4 @@
+import { withEvolutionInstance } from "@/services/evolution-context";
 import { NextResponse } from "next/server";
 import { permissions } from "@/constants/permissions";
 import { authErrorResponse } from "@/lib/api-errors";
@@ -15,7 +16,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const message = await prisma.chatMessage.findUnique({
       where: { id },
-      select: { rawPayload: true },
+      select: { rawPayload: true, conversation: { select: { agent: { select: { zapiInstanceId: true } } } } },
     });
 
     const rawPayload = message?.rawPayload;
@@ -48,10 +49,14 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       return new Response(Buffer.from(media.source, "base64"), { headers });
     }
 
-    if (/^https?:\/\//i.test(media.source)) {
+    const instanceName = message?.conversation.agent?.zapiInstanceId;
+    if (!instanceName) throw new Error("Conversa sem instância de origem identificada.");
+    const mediaSource = media.source;
+    return await withEvolutionInstance(instanceName, async () => {
+    if (/^https?:\/\//i.test(mediaSource)) {
       const config = getEvolutionConfig();
-      const response = await fetch(media.source, {
-        headers: { apikey: config.apiKey },
+      const response = await fetch(mediaSource, {
+        headers: new URL(mediaSource).origin === new URL(config.baseUrl).origin ? { apikey: config.apiKey } : {},
         cache: "no-store",
       });
       if (response.ok && response.body) {
@@ -67,6 +72,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     }
 
     return NextResponse.json(errorResponse("Nao foi possivel baixar a midia.", "MEDIA_DOWNLOAD_ERROR"), { status: 502 });
+    });
   } catch (error) {
     const authError = authErrorResponse(error);
     if (authError) return authError;

@@ -7,3 +7,5 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   return handleWhatsAppWebhookHealth(request);
 }
+
+export const maxDuration = 60;

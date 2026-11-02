@@ -5,6 +5,7 @@ import { requireCurrentUser } from "@/lib/auth-context";
 import { assertPermission } from "@/lib/permissions";
 import { permissions } from "@/constants/permissions";
 import { ConversationService } from "@/modules/chatbot/services/conversation.service";
+import { resolveSelectedAgent } from "@/services/whatsapp-agent";
 import { normalizePhone } from "@/services/validators";
 
 const conversationService = new ConversationService();
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
     assertPermission(user, permissions.conversationsView);
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id")?.trim();
-    const conversations = id ? await conversationService.get(id) : await conversationService.list();
+    const conversations = id ? await conversationService.get(id) : await conversationService.list(searchParams.get("agentId")?.trim() || undefined);
     if (!conversations) {
       return NextResponse.json(errorResponse("Conversa nao encontrada.", "NOT_FOUND"), { status: 404 });
     }
@@ -33,13 +34,15 @@ export async function POST(request: Request) {
   try {
     const user = await requireCurrentUser();
     assertPermission(user, permissions.conversationsView);
-    const body = await request.json().catch(() => ({})) as { phone?: string; name?: string; assignedTo?: string; tags?: unknown };
+    const body = await request.json().catch(() => ({})) as { phone?: string; name?: string; assignedTo?: string; tags?: unknown; agentId?: string };
     const phone = normalizePhone(body.phone ?? "");
     if (!phone) {
       return NextResponse.json(errorResponse("Telefone obrigatorio.", "VALIDATION_ERROR"), { status: 422 });
     }
 
+    const agent = await resolveSelectedAgent(body.agentId);
     const conversation = await conversationService.create({
+      agentId: agent.id,
       phone,
       name: body.name,
       assignedTo: body.assignedTo,

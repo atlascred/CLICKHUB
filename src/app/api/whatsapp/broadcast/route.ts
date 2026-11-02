@@ -1,3 +1,5 @@
+import { resolveSelectedAgent } from "@/services/whatsapp-agent";
+import { withEvolutionInstance } from "@/services/evolution-context";
 import { NextResponse } from "next/server";
 import { WHATSAPP_BROADCAST_MAX_BATCH_SIZE } from "@/config/whatsapp-broadcast";
 import { permissions } from "@/constants/permissions";
@@ -10,6 +12,7 @@ import { parsePhoneList } from "@/services/validators";
 
 type BroadcastBody = {
   phones?: string;
+  agentId?: string;
   message?: string;
   media?: string;
   mimeType?: string;
@@ -18,13 +21,16 @@ type BroadcastBody = {
   sendNow?: boolean;
 };
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await requireCurrentUser();
     assertPermission(user, permissions.conversationsView);
+    const agent = await resolveSelectedAgent(new URL(request.url).searchParams.get("agentId") || undefined);
+    return await withEvolutionInstance(agent.zapiInstanceId!, async () => {
     await processDueBroadcasts(3);
     const records = await listBroadcastDispatches();
     return NextResponse.json(successResponse("Historico de disparos consultado.", records));
+    });
   } catch (error) {
     const authError = authErrorResponse(error);
     if (authError) return authError;
@@ -76,6 +82,8 @@ export async function POST(request: Request) {
 
     const batchId = `broadcast-${Date.now()}`;
     const phones = uniqueValidPhones.map((item) => item.phone);
+    const agent = await resolveSelectedAgent(body?.agentId);
+    return await withEvolutionInstance(agent.zapiInstanceId!, async () => {
     const dispatch = createBroadcastDispatch({
       batchId,
       message,
@@ -103,6 +111,7 @@ export async function POST(request: Request) {
       sendNow,
       processed,
     }), { status: 202 });
+    });
   } catch (error) {
     const authError = authErrorResponse(error);
     if (authError) return authError;
@@ -117,12 +126,13 @@ export async function PUT(request: Request) {
   try {
     const user = await requireCurrentUser();
     assertPermission(user, permissions.conversationsView);
-    const body = await request.json().catch(() => ({})) as { ids?: string[]; action?: string };
+    const body = await request.json().catch(() => ({})) as { ids?: string[]; action?: string; agentId?: string };
     const ids = Array.isArray(body.ids) ? body.ids.filter((id) => typeof id === "string" && id.trim()) : [];
     if (body.action !== "cancel" || !ids.length) {
       return NextResponse.json(errorResponse("Informe os agendamentos para cancelar.", "VALIDATION_ERROR"), { status: 422 });
     }
-    const result = await cancelBroadcastDispatches(ids);
+    const agent = await resolveSelectedAgent(body.agentId || new URL(request.url).searchParams.get("agentId") || undefined);
+    const result = await withEvolutionInstance(agent.zapiInstanceId!, () => cancelBroadcastDispatches(ids));
     return NextResponse.json(successResponse("Agendamento cancelado.", result));
   } catch (error) {
     const authError = authErrorResponse(error);
@@ -136,10 +146,11 @@ export async function DELETE(request: Request) {
     const user = await requireCurrentUser();
     assertPermission(user, permissions.conversationsView);
     const url = new URL(request.url);
-    const body = await request.json().catch(() => ({})) as { ids?: string[]; all?: boolean };
+    const body = await request.json().catch(() => ({})) as { ids?: string[]; all?: boolean; agentId?: string };
     const deleteAll = body.all === true || url.searchParams.get("all") === "1" || url.searchParams.get("all") === "true";
     const ids = Array.isArray(body.ids) ? body.ids : url.searchParams.getAll("id");
-    const result = await deleteBroadcastDispatches(deleteAll ? undefined : ids);
+    const agent = await resolveSelectedAgent(body.agentId || url.searchParams.get("agentId") || undefined);
+    const result = await withEvolutionInstance(agent.zapiInstanceId!, () => deleteBroadcastDispatches(deleteAll ? undefined : ids));
     return NextResponse.json(successResponse("Historico de disparos excluido.", result));
   } catch (error) {
     const authError = authErrorResponse(error);

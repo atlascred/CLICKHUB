@@ -1,5 +1,6 @@
 export type CreatePlanInput = {
   name: string;
+  agentId?: string;
   speed?: string;
   price: number;
   description?: string;

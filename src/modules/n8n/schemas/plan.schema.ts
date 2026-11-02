@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const createPlanSchema = z.object({
+  agentId: z.string().uuid().optional(),
   name: z.string().min(2, "Informe o nome do plano."),
   speed: z.string().optional(),
   price: z.coerce.number().nonnegative("Informe um valor valido."),

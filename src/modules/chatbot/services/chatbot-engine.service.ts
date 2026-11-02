@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { CepRepository } from "@/repositories/cep.repository";
 import { ChatbotRepository } from "@/repositories/chatbot.repository";
 import { OpenAiService } from "@/services/openai/openai.service";
@@ -7,6 +8,8 @@ import { checkEvolutionWhatsAppNumber, sendEvolutionTextMessage } from "@/servic
 import { checkMetaWhatsAppNumber, isMetaWhatsAppEnabled, markMetaMessageAsRead, sendMetaTextMessage } from "@/services/meta-whatsapp";
 import { ZapiService } from "@/services/zapi/zapi.service";
 import { onlyDigits } from "@/utils/mask";
+import { commercialKnowledge, officialAnswer } from "@/modules/chatbot/knowledge";
+import { extractLabeledName, fullName, hasInjection, isExplicitConfirmation, isExplicitRefusal, safeFreeReply, type ConversationInterpretation } from "@/modules/chatbot/intelligence";
 
 const VALID_BILLING_DAYS = [5, 8, 10, 15, 20, 25];
 
@@ -16,6 +19,7 @@ export class ChatbotEngineService {
     private readonly chatbotRepository = new ChatbotRepository(),
     private readonly zapiService = new ZapiService(),
     private readonly openAiService = new OpenAiService(),
+    private readonly delivery?: { send: (input: { phone: string; message: string }) => Promise<void> },
   ) {}
 
   async validateCoverage(cep: string) {
@@ -39,7 +43,7 @@ export class ChatbotEngineService {
     instanceId?: string;
   }) {
     const phone = normalizeWhatsappPhone(input.phone);
-    const agent = await this.chatbotRepository.getAgentByInstance(input.instanceId);
+    const agent = await this.chatbotRepository.getAgentByInstance(input.instanceId, false);
     const conversation = await this.chatbotRepository.findOrCreateConversation(phone, agent?.id);
     const eventId = input.providerId ? `call:${input.providerId}` : undefined;
 
@@ -63,6 +67,7 @@ export class ChatbotEngineService {
     }
 
     const memory = normalizeMemory(conversation.memory);
+    if (conversation.state === "FINISHED" || memory.humanTakeover || memory.blocked || ["BLOCKED", "HUMAN_HANDOFF", "MANUAL"].includes(conversation.state)) return { state: conversation.state, replied: false, duplicated: false };
     const resumePrompt = callResumePrompt(conversation.state, memory, agent);
     const reply = `Não consigo atender ligações por aqui, mas continuo com você pelo WhatsApp. 😊\n\n${resumePrompt}`;
     await this.zapiService.sendText({ phone, message: reply, config: agentConfig(agent) });
@@ -83,32 +88,28 @@ export class ChatbotEngineService {
     instanceId?: string;
     extractedData?: ExtractedCustomerData;
     provider?: "zapi" | "evolution" | "meta";
+    batchMessages?: Array<{ providerId: string; body: string; rawPayload?: Prisma.InputJsonValue }>;
   }) {
     const phone = normalizeWhatsappPhone(input.phone);
     let alreadyReceived = false;
 
     if (input.providerId) {
-      const existingMessage = await this.chatbotRepository.findMessageByProviderId(input.providerId);
-      if (existingMessage) {
-        const alreadyReplied = await this.chatbotRepository.hasOutboundResponseAfter(
-          existingMessage.conversationId,
-          existingMessage.createdAt,
-        );
-        if (alreadyReplied) {
-          return { state: "DUPLICATED", replied: false, delayMs: 0 };
-        }
-        alreadyReceived = true;
+      const receipt = await this.chatbotRepository.findReplyReceipt(input.providerId);
+      if (receipt) {
+        await this.chatbotRepository.finalizePendingReply(input.providerId);
+        return { state: "DUPLICATED", replied: false, delayMs: 0 };
       }
+      alreadyReceived = Boolean(await this.chatbotRepository.findMessageByProviderId(input.providerId));
     }
 
-    const agent = await this.chatbotRepository.getAgentByInstance(input.instanceId);
+    const agent = await this.chatbotRepository.getAgentByInstance(input.instanceId, input.provider === "evolution");
     const conversation = await this.chatbotRepository.findOrCreateConversation(phone, agent?.id);
     const currentMemory = normalizeMemory(conversation.memory);
 
     if (!alreadyReceived && input.providerId) {
       const claimed = await this.chatbotRepository.claimInboundMessage({
         conversationId: conversation.id,
-        body: input.message,
+        body: input.batchMessages?.[0]?.body ?? input.message,
         providerId: input.providerId,
         rawPayload: input.rawPayload ?? {},
       });
@@ -124,7 +125,15 @@ export class ChatbotEngineService {
       });
     }
 
-    if (currentMemory.humanTakeover === true) {
+    for (const item of input.batchMessages ?? []) {
+      if (item.providerId !== input.providerId) {
+        await this.chatbotRepository.claimInboundMessage({ conversationId: conversation.id, ...item });
+      }
+    }
+    if (conversation.state === "FINISHED") {
+      return { state: "FINISHED", replied: false, delayMs: 0, finished: true };
+    }
+    if (currentMemory.humanTakeover === true || currentMemory.blocked === true || ["BLOCKED", "HUMAN_HANDOFF", "MANUAL"].includes(conversation.state)) {
       return { state: conversation.state, replied: false, delayMs: 0, humanTakeover: true };
     }
 
@@ -136,7 +145,26 @@ export class ChatbotEngineService {
     if (input.providerId && provider === "meta") {
       await markMetaMessageAsRead(input.providerId);
     }
-    const next = await this.nextResponse({
+    const pending = currentMemory.pendingBotReply;
+    if (pending && pending.providerId !== input.providerId) throw new Error("Resposta pendente exige revisão antes de continuar.");
+    if (pending?.sending) {
+      await this.chatbotRepository.updateConversation({ id: conversation.id, state: conversation.state,
+        memory: JSON.parse(JSON.stringify({ ...currentMemory, humanTakeover: true, takeoverReason: "Entrega incerta; conferir histórico antes de reenviar.", takeoverAt: new Date().toISOString() })) });
+      throw new Error("Entrega incerta; revisão humana necessária antes de reenviar.");
+    }
+    let interpretation: ConversationInterpretation | null = null;
+    if (!pending && input.message.trim().length > 3 && !hasInjection(input.message)) {
+      try {
+        interpretation = await this.openAiService.interpretConversation({
+          message: input.message, state: conversation.state,
+          history: (conversation.messages ?? []).slice(0, 6).reverse().map(m => ({
+            role: m.direction === "inbound" ? "user" : "assistant",
+            text: m.body.replace(/\b\d[\d.\-/]{6,}\d\b/g, "[dado protegido]").replace(/\S+@\S+/g, "[e-mail]").slice(0, 400),
+          })),
+        });
+      } catch { /* AI failure never blocks the deterministic flow. */ }
+    }
+    const next: NextBotResponse = pending?.next ?? await this.nextResponse({
       phone,
       message: input.message,
       state: conversation.state,
@@ -146,6 +174,10 @@ export class ChatbotEngineService {
       },
       agent,
       extractedData: input.extractedData,
+      interpretation,
+      parts: input.batchMessages?.map(m => m.body),
+      requestId: input.providerId,
+      instanceId: input.instanceId,
     });
 
     const minTyping = agent?.minTypingSeconds ?? 2;
@@ -154,56 +186,83 @@ export class ChatbotEngineService {
     const typingEnabled =
       (agent?.enableReplyDelay ?? true) && (agent?.enableTyping ?? true);
 
+    // Durable response prepared before any external send. Uncertain sends require review.
+    const prepared: PendingBotReply = { providerId: input.providerId, next, sending: false, batchIds: input.batchMessages?.map(m => m.providerId) };
     await this.chatbotRepository.updateConversation({
-      id: conversation.id,
-      state: next.state,
-      memory: next.memory as Prisma.InputJsonValue,
-      leadId: next.leadId,
+      id: conversation.id, state: conversation.state,
+      memory: JSON.parse(JSON.stringify({ ...currentMemory, pendingBotReply: prepared })),
     });
-    if (provider === "meta" || (provider === "evolution" && isMetaWhatsAppEnabled())) {
-      const destinationPhone = await this.resolveMetaDestinationPhone(phone);
-      await sendMetaTextMessage({ to: destinationPhone, message: next.reply });
-    } else if (provider === "evolution") {
-      const destinationPhone = await this.resolveEvolutionDestinationPhone(phone);
-      await sendEvolutionTextMessage({ to: destinationPhone, message: next.reply, delayTypingSeconds: typingEnabled ? delaySeconds : undefined });
-    } else {
-      await this.zapiService.sendText({
-        phone,
-        message: next.reply,
-        delayTypingSeconds: typingEnabled ? delaySeconds : undefined,
-        config: agentConfig(agent),
+    await this.chatbotRepository.updateConversation({
+      id: conversation.id, state: conversation.state,
+      memory: JSON.parse(JSON.stringify({ ...currentMemory, pendingBotReply: { ...prepared, sending: true } })),
+    });
+    const latestControl = await this.chatbotRepository.getConversationControl(conversation.id);
+    const latestMemory = normalizeMemory(latestControl?.memory);
+    if (latestControl?.state === "FINISHED") return { state: "FINISHED", replied: false, delayMs: 0, finished: true };
+    if (latestMemory.humanTakeover || latestMemory.blocked || ["BLOCKED", "HUMAN_HANDOFF", "MANUAL"].includes(latestControl?.state ?? "")) {
+      return { state: latestControl?.state ?? conversation.state, replied: false, delayMs: 0, humanTakeover: true };
+    }
+    try {
+      if (this.delivery) {
+        await this.delivery.send({ phone, message: next.reply });
+      } else if (provider === "meta" || (provider === "evolution" && isMetaWhatsAppEnabled())) {
+        const destinationPhone = await this.resolveMetaDestinationPhone(phone);
+        await sendMetaTextMessage({ to: destinationPhone, message: next.reply });
+      } else if (provider === "evolution") {
+        const destinationPhone = await this.resolveEvolutionDestinationPhone(phone);
+        await sendEvolutionTextMessage({ to: destinationPhone, message: next.reply, delayTypingSeconds: typingEnabled ? delaySeconds : undefined });
+      } else {
+        await this.zapiService.sendText({
+          phone,
+          message: next.reply,
+          delayTypingSeconds: typingEnabled ? delaySeconds : undefined,
+          config: agentConfig(agent),
+        });
+        if (next.interactive?.type === "button-list") {
+          try {
+            await this.zapiService.sendButtonList({
+              phone,
+              message: next.interactive.message,
+              buttons: next.interactive.buttons,
+              config: agentConfig(agent),
+            });
+          } catch {
+            // Fallback keeps the conversational text already sent.
+          }
+        }
+        if (next.interactive?.type === "option-list") {
+          try {
+            await this.zapiService.sendOptionList({
+              phone,
+              title: next.interactive.title,
+              message: next.interactive.message,
+              buttonLabel: next.interactive.buttonLabel,
+              options: next.interactive.options,
+              config: agentConfig(agent),
+            });
+          } catch {
+            // Fallback keeps the conversational text already sent.
+          }
+        }
+      }
+    } catch (error) {
+      await this.chatbotRepository.updateConversation({
+        id: conversation.id, state: conversation.state,
+        memory: JSON.parse(JSON.stringify({ ...currentMemory, pendingBotReply: { ...prepared, sending: true }, humanTakeover: true,
+          takeoverReason: "Falha ou entrega incerta. Conferir histórico antes de reenviar.", takeoverAt: new Date().toISOString() })),
       });
-      if (next.interactive?.type === "button-list") {
-        try {
-          await this.zapiService.sendButtonList({
-            phone,
-            message: next.interactive.message,
-            buttons: next.interactive.buttons,
-            config: agentConfig(agent),
-          });
-        } catch {
-          // Fallback keeps the conversational text already sent.
-        }
-      }
-      if (next.interactive?.type === "option-list") {
-        try {
-          await this.zapiService.sendOptionList({
-            phone,
-            title: next.interactive.title,
-            message: next.interactive.message,
-            buttonLabel: next.interactive.buttonLabel,
-            options: next.interactive.options,
-            config: agentConfig(agent),
-          });
-        } catch {
-          // Fallback keeps the conversational text already sent.
-        }
-      }
+      throw error;
     }
     await this.chatbotRepository.saveMessage({
       conversationId: conversation.id,
       direction: "outbound",
       body: next.reply,
+      providerId: input.providerId ? `reply-to:${input.providerId}` : undefined,
+      rawPayload: { inReplyTo: input.batchMessages?.map(m => m.providerId) ?? (input.providerId ? [input.providerId] : []) },
+    });
+    await this.chatbotRepository.updateConversation({
+      id: conversation.id, state: next.state,
+      memory: JSON.parse(JSON.stringify(next.memory)), leadId: next.leadId,
     });
 
     return { state: next.state, replied: true, delayMs: typingEnabled ? delaySeconds * 1000 : 0 };
@@ -236,13 +295,42 @@ export class ChatbotEngineService {
     memory: ChatMemory;
     agent: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>;
     extractedData?: ExtractedCustomerData;
+    interpretation?: ConversationInterpretation | null;
+    parts?: string[];
+    requestId?: string;
+    instanceId?: string;
   }): Promise<NextBotResponse> {
+    if (input.state === "FINISHED") return { state: "FINISHED", memory: { ...input.memory }, reply: "" };
     const originalText = input.message.trim();
     const memory = { ...input.memory };
-    applyExtractedAddress(memory, input.extractedData);
+    if (input.extractedData) applyValidatedExtractedData(memory, input.extractedData);
     const text = extractedValueForState(input.state, input.extractedData) ?? originalText;
     const firstName = getFirstName(memory.name);
     applyParsedCustomerData(memory, text, input.state);
+    const evidence = input.interpretation?.evidence ?? {};
+    for (const source of Object.values(evidence)) applyParsedCustomerData(memory, source, "EARLY_DATA");
+    applyValidatedExtractedData(memory, { fullName: evidence.name, cep: evidence.cep, cpf: evidence.document,
+      birthDate: evidence.birthDate, email: evidence.email, streetNumber: evidence.streetNumber });
+    if (evidence.complement && evidence.complement.length < 160) memory.complement = normalizeComplement(evidence.complement);
+    const earlyName = extractLabeledName(originalText);
+    if (earlyName) memory.name = earlyName;
+    const earlyCep = originalText.match(/\bcep\s*[:=]?\s*(\d{5}[- ]?\d{3})\b/i)?.[1];
+    if (earlyCep) memory.cep = onlyDigits(earlyCep);
+    const plans = await this.getPlans(input.agent);
+    if ((input.parts?.length ?? 0) > 1) applyBatchData(memory, input.parts!, input.state, plans);
+    const mentionedPlan = selectPlan(evidence.plan || text, plans);
+    const explicitPlan = (Boolean(evidence.plan) || /(?:trocar|mudar|alterar|prefiro|quero|plano|ficar com|opcao)/i.test(normalizeText(text)))
+      && /\b(600|800|1000|1\s*giga|seiscentos|oitocentos)\b/i.test(normalizeText(text))
+      && !text.includes("?") && !/\bnao\b/.test(normalizeText(text));
+    const conflict = conflictingFields(originalText);
+    if (conflict) return { state: input.state, memory: { ...input.memory }, reply: `${conflict}\n\n${promptForState(input.state, firstName)}` };
+    if (hasInjection(originalText)) return { state: input.state, memory: { ...input.memory }, reply: `Posso ajudar, mas não posso alterar condições comerciais nem confirmar ações que não foram realizadas.\n\n${promptForState(input.state, firstName)}` };
+    if (explicitPlan && mentionedPlan && input.state !== "CHOOSE_PLAN" && input.state !== "FINISHED") {
+      memory.planId = mentionedPlan.id; memory.planName = mentionedPlan.name; memory.planValue = Number(mentionedPlan.price);
+      memory.pendingUpsellPlanId = undefined;
+      if (input.state === "CONFIRM_DATA" || input.state === "CORRECTION") return { state: "CONFIRM_DATA", memory, reply: `Plano alterado.\n\n${buildSummary(memory)}\n\nConfirma os dados? Responda SIM ou NÃO.` };
+      if (input.state !== "START") return { state: input.state, memory, reply: `Anotado: ${mentionedPlan.name} por ${formatMoney(Number(mentionedPlan.price))}/mês.\n\n${promptForState(input.state, firstName)}` };
+    }
 
     if (isRestartRequest(text)) {
       return {
@@ -252,7 +340,7 @@ export class ChatbotEngineService {
       };
     }
 
-    if (isHandoffRequest(text)) {
+    if (isHandoffRequest(text) || input.interpretation?.intent === "handoff") {
       memory.handoff = true;
       memory.humanTakeover = true;
       memory.takeoverAt = new Date().toISOString();
@@ -272,11 +360,29 @@ export class ChatbotEngineService {
       };
     }
 
-    if (asksForPlanRecommendation(text)) {
+    if (/^\[(Áudio|Imagem|Documento|Arquivo)/i.test(text) || (input.extractedData && !Object.keys(input.extractedData).length)) {
+      return { state: input.state, memory, reply: `Não consegui identificar o conteúdo com segurança. Pode escrever a informação?\n\n${promptForState(input.state, firstName)}` };
+    }
+    if (input.interpretation?.intent === "unclear" || /^(nao sei|sei la|nao entendi|ahn)$/.test(normalizeText(text)) || /^\?+$/.test(text.trim())) {
+      memory.confusionCount = (memory.confusionCount ?? 0) + 1;
+      if (memory.confusionCount >= 3) {
+        memory.humanTakeover = true; memory.takeoverReason = "Dificuldade repetida de interpretação.";
+        return { state: input.state, memory, reply: "Para evitar que você precise repetir, vou sinalizar este atendimento para uma consultora humana. Mantive os dados já informados." };
+      }
+    }
+    const official = officialAnswer(text);
+    if (official) return { state: input.state, memory, reply: `${official}\n\n${promptForState(input.state, firstName)}` };
+    if (/voltei|continuar|onde paramos|retomar/.test(normalizeText(text))) {
+      return { state: input.state, memory, reply: `Que bom ter você de volta! Mantive os dados já informados.\n\n${promptForState(input.state, firstName)}` };
+    }
+    if (/irritad|chatead|que saco|muita pergunta|perguntas demais|reclam|demorad/.test(normalizeText(text)) || input.interpretation?.tone === "frustrated") {
+      return { state: input.state, memory, reply: `Entendo a sua frustração. Vamos por partes, sem repetir o que você já informou. Se preferir, pode pedir uma atendente.\n\n${promptForState(input.state, firstName)}` };
+    }
+    if (asksForPlanRecommendation(text) || input.interpretation?.intent === "recommendation") {
       const plans = await this.getPlans(input.agent);
-      const recommended = findRecommendedPlan(plans);
+      const recommended = findRecommendedPlan(plans, text);
       const recommendation = recommended
-        ? `Para essa necessidade, recomendo o ${recommended.name} por ${formatMoney(Number(recommended.price))}/mês. É uma das opções mais completas entre os planos disponíveis. 😊`
+        ? `Para essa necessidade, recomendo o ${recommended.name} por ${formatMoney(Number(recommended.price))}/mês.\n${recommended.description ?? "Confira os benefícios cadastrados."}`
         : "No momento não há planos ativos vinculados a este atendimento.";
       return {
         state: input.state,
@@ -294,7 +400,8 @@ export class ChatbotEngineService {
       };
     }
 
-    if (shouldAnswerOutsideFlow(text, input.state)) {
+    const criticalAnswer = input.state === "CONFIRM_DATA" && (isPositive(text) || isNegative(text));
+    if (!criticalAnswer && (shouldAnswerOutsideFlow(text, input.state) || ["question", "smalltalk", "unclear"].includes(input.interpretation?.intent ?? "") || /^(kkk+|rsrs|eae|e ai|opa|salve|nao sei|sei la|conte uma piada)/.test(normalizeText(text)))) {
       if (input.state === "ASK_DOCUMENT" && asksWhyCpf(text)) {
         return {
           state: input.state,
@@ -302,7 +409,8 @@ export class ChatbotEngineService {
           reply: "O CPF é necessário para realizar a análise e o cadastro da contratação. 🔐\nEle faz parte dos dados necessários para encaminharmos sua solicitação.\n\nDepois disso, continuamos normalmente de onde paramos. 😊\nPode me informar seu CPF?",
         };
       }
-      const answer = await this.answerOutsideFlow({
+      const aiReply = safeFreeReply(input.interpretation?.reply ?? "", input.message);
+      const answer = aiReply || await this.answerOutsideFlow({
         message: text,
         state: input.state,
         agent: input.agent,
@@ -315,6 +423,12 @@ export class ChatbotEngineService {
       };
     }
 
+    if (input.state === "START" && memory.cep) {
+      const coverage = await this.validateCoverage(memory.cep);
+      applyAddress(memory, { street: coverage?.street ?? undefined, city: coverage?.city ?? undefined, state: coverage?.state ?? undefined, neighborhood: coverage?.neighborhood ?? undefined });
+      const next = afterKnownAddress(memory, plans);
+      return { ...next, reply: `Olá! Sou a ${input.agent?.name ?? "Lily"}. Já anotei as informações que você enviou.\n\n${next.reply}` };
+    }
     if (input.state === "START") {
       return {
         state: "ASK_CEP",
@@ -324,7 +438,7 @@ export class ChatbotEngineService {
     }
 
     if (input.state === "ASK_CEP") {
-      const cep = parseCep(text);
+      const cep = memory.cep || parseCep(text);
       if (!cep) {
         return {
           state: "ASK_CEP",
@@ -342,23 +456,12 @@ export class ChatbotEngineService {
         state: coverage?.state ?? viaCep?.state,
       });
 
-      if (!coverage) {
-        return {
-          state: "ASK_STREET_NUMBER",
-          memory,
-          reply: addressFoundMessage(memory),
-        };
-      }
-
-      return {
-        state: "ASK_STREET_NUMBER",
-        memory,
-        reply: addressFoundMessage(memory),
-      };
+      const next = afterKnownAddress(memory, plans);
+      return { ...next, reply: `${formatAddressShort(memory)}\n\n${next.reply}` };
     }
 
     if (input.state === "ASK_STREET_NUMBER") {
-      const streetNumber = parseSimpleNumber(text);
+      const streetNumber = memory.streetNumber || parseSimpleNumber(text);
       if (!streetNumber) {
         return {
           state: "ASK_STREET_NUMBER",
@@ -367,6 +470,7 @@ export class ChatbotEngineService {
         };
       }
       memory.streetNumber = streetNumber;
+      if (memory.complement !== undefined) return afterKnownAddress(memory, plans);
       return {
         state: "ASK_COMPLEMENT",
         memory,
@@ -376,6 +480,7 @@ export class ChatbotEngineService {
 
     if (input.state === "ASK_COMPLEMENT") {
       memory.complement = normalizeComplement(text);
+      if (memory.planId) return nextCustomerDataResponse(memory, `Endereço registrado.\n\n`);
       const plans = await this.getPlans(input.agent);
       return {
         state: "CHOOSE_PLAN",
@@ -396,11 +501,9 @@ export class ChatbotEngineService {
     }
 
     if (input.state === "ASK_NAME") {
-      memory.name = extractNameFromText(text) || memory.name;
-      if (!memory.name && (text.length < 3 || onlyDigits(text).length > 2)) {
-        return { state: "ASK_NAME", memory, reply: "Pode me informar seu nome completo, por favor? 😊" };
-      }
-      if (!memory.name) memory.name = toTitleCase(text);
+      const name = fullName(text) || memory.name;
+      if (!name) return { state: "ASK_NAME", memory, reply: "Pode me informar seu nome completo, com nome e sobrenome, por favor?" };
+      memory.name = name;
       return nextCustomerDataResponse(memory, `Muito prazer, ${getFirstName(memory.name)}! 😊\nSeu nome já está registrado. ✅\n\n`);
     }
 
@@ -518,6 +621,14 @@ export class ChatbotEngineService {
 
     if (input.state === "CONFIRM_DATA") {
       if (isPositive(text)) {
+        if (!memory.cep || !/^\d{8}$/.test(memory.cep)) return { state: "ASK_CEP", memory, reply: promptForState("ASK_CEP") };
+        if (!memory.streetNumber || !parseSimpleNumber(memory.streetNumber)) return { state: "ASK_STREET_NUMBER", memory, reply: promptForState("ASK_STREET_NUMBER") };
+        if (!memory.complement) return { state: "ASK_COMPLEMENT", memory, reply: promptForState("ASK_COMPLEMENT") };
+        const incomplete = nextCustomerDataResponse(memory);
+        if (incomplete.state !== "CONFIRM_DATA") return incomplete;
+        const activePlan = plans.find(p => p.id === memory.planId);
+        if (!activePlan) return { state: "CHOOSE_PLAN", memory: { ...memory, planId: undefined }, reply: `O plano anterior não está mais disponível. Escolha uma opção ativa:\n\n${formatPlanList(plans)}` };
+        if (Number(activePlan.price) !== memory.planValue || activePlan.name !== memory.planName) return { state: "CONFIRM_DATA", memory: { ...memory, planValue: Number(activePlan.price), planName: activePlan.name }, reply: `O catálogo foi atualizado. Confira o valor antes de confirmar:\n\n${buildSummary({ ...memory, planValue: Number(activePlan.price), planName: activePlan.name })}\n\nConfirma? Responda SIM ou NÃO.` };
         const lead = await this.chatbotRepository.createLeadFromChat({
           name: memory.name ?? "Lead WhatsApp",
           phone: memory.whatsapp ?? input.phone,
@@ -535,9 +646,11 @@ export class ChatbotEngineService {
           planId: memory.planId,
           planName: memory.planName,
           expectedValue: memory.planValue,
-          notes: "Lead finalizado pelo fluxo do chatbot Lily.",
+          notes: `Lead finalizado pelo fluxo do chatbot Lily. Instância: ${input.instanceId ?? "legado"}.`,
+          requestId: input.requestId,
         });
 
+        if (!lead?.id) throw new Error("O sistema não confirmou o registro do lead.");
         return {
           state: "FINISHED",
           memory,
@@ -578,6 +691,7 @@ export class ChatbotEngineService {
           reply: correctionPrompt(correctionField),
         };
       }
+      if (!validCorrection(correctionField, text, plans)) return { state: "CORRECTION", memory: { ...memory, correctionField }, reply: `Não consegui validar a correção. ${correctionPrompt(correctionField)}` };
       const corrected = await this.applyCorrection(text, { ...memory, correctionField }, input.agent);
       corrected.correctionField = undefined;
       return {
@@ -595,13 +709,6 @@ export class ChatbotEngineService {
       };
     }
 
-    if (input.state === "FINISHED") {
-      return {
-        state: "FINISHED",
-        memory,
-        reply: "Seu atendimento já está registrado. Se precisar falar com uma consultora, envie atendente. Para começar novamente, envie reiniciar. 😊",
-      };
-    }
 
     return {
       state: "ASK_CEP",
@@ -780,20 +887,22 @@ export class ChatbotEngineService {
     agent: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>;
   }) {
     try {
-      return await this.openAiService.answerCommercialQuestion(
+      const reply = await this.openAiService.answerCommercialQuestion(
         [
-          `Voce e ${input.agent?.name ?? "Lily"}, consultora comercial de planos de internet fibra.`,
+          `Voce e ${input.agent?.name ?? "Lily"}, assistente virtual comercial de planos de internet fibra.`,
           `Personalidade: ${input.agent?.personality ?? "Vendedora humana, cordial e objetiva."}`,
           `Regras:\n${formatAgentRules(input.agent?.rules)}`,
           `O funil esta na etapa ${input.state}. Responda a duvida sem pular etapa.`,
-          "Nao responda temas politicos, religiosos ou fora do contexto comercial.",
+          "Pode conversar sobre assuntos gerais com respeito e segurança; depois retome o cadastro.",
           "Nunca confirme cobertura, disponibilidade tecnica, prazo, taxa, fidelidade ou promocao se essa informacao nao estiver cadastrada.",
-          "Nunca diga que e IA, robo ou secretario eletronico.",
+          "Se perguntarem, explique que é a assistente virtual da Click Hubnet.",
           "Use no maximo um emoji.",
           `Cliente: ${input.customerName ?? "cliente"}`,
+          `Condições oficiais: ${JSON.stringify(commercialKnowledge)}`,
           `Pergunta: ${input.message}`,
         ].join("\n\n"),
       );
+      return safeFreeReply(reply, input.message) || "Posso continuar com você. Se preferir, também pode pedir uma atendente.";
     } catch {
       return "Posso te orientar sobre os planos e a solicitação de contratação. 😊";
     }
@@ -825,7 +934,12 @@ type InteractivePayload =
       options: Array<{ id: string; title: string; description?: string }>;
     };
 
+type PendingBotReply = { providerId?: string; sending: boolean; next: NextBotResponse; batchIds?: string[] };
+
 type ChatMemory = {
+  confusionCount?: number;
+  blocked?: boolean;
+  pendingBotReply?: PendingBotReply;
   name?: string;
   cep?: string;
   address?: string;
@@ -926,7 +1040,7 @@ function parseCep(text: string) {
 function normalizeCepDigits(value: string) {
   const digits = onlyDigits(value);
   if (/^\d{8}$/.test(digits)) return digits;
-  if (/^\d{7}$/.test(digits)) return `0${digits}`;
+  // Incomplete CEPs are not silently padded.
   return "";
 }
 
@@ -1010,6 +1124,7 @@ function parseBirthDate(text: string) {
 
   if (!day || !month || !year) return null;
   const date = new Date(Date.UTC(year, month - 1, day, 12));
+  if (date.getTime() > Date.now()) return null;
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
   if (year < 1900 || year > new Date().getFullYear()) return null;
   return date;
@@ -1021,8 +1136,12 @@ function normalizeYear(year: number) {
 }
 
 function parseSimpleNumber(text: string) {
-  const digits = onlyDigits(text);
-  return digits || wordsToDigits(text) || "";
+  const labeled = text.match(/(?:n[uú]mero|n[º°]|casa)\s*[:=]?\s*(\d{1,6}[a-z]?)/i)?.[1];
+  if (labeled) return labeled;
+  if (/^(?:s\/?n|sem n[uú]mero)$/i.test(text.trim())) return "S/N";
+  if (/^\d{1,6}[a-z]?$/i.test(text.trim())) return text.trim();
+  if (/^(?:zero|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove)(?:\s+(?:zero|um|dois|tr[eê]s|quatro|cinco|seis|sete|oito|nove))*$/i.test(text.trim())) return wordsToDigits(text);
+  return "";
 }
 
 function parseBillingDay(text: string) {
@@ -1033,7 +1152,8 @@ function parseBillingDay(text: string) {
 
 function parseEmail(text: string) {
   const match = text.trim().match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return match?.[0].toLowerCase() ?? "";
+  const email = match?.[0].toLowerCase() ?? "";
+  return z.string().email().safeParse(email).success ? email : "";
 }
 
 function normalizeComplement(text: string) {
@@ -1170,7 +1290,11 @@ function buildPlanOptionList(plans: PlanCandidate[]): Extract<InteractivePayload
   };
 }
 
-function findRecommendedPlan(plans: PlanCandidate[]) {
+function findRecommendedPlan(plans: PlanCandidate[], needs = "") {
+  const text = normalizeText(needs);
+  if (/barat|econom|basico|so (estudar|mensag)/.test(text)) return [...plans].sort((a,b) => Number(a.price) - Number(b.price))[0];
+  if (/varios|muitos|jog|home office|trabalh|familia/.test(text)) return [...plans].filter(p => planSpeedMbps(p) >= 800).sort((a,b) => Number(a.price) - Number(b.price))[0] ?? plans[0];
+
   const preferred =
     plans.find((plan) => normalizeText(plan.name).includes("1 giga") && normalizeText(plan.name).includes("chip")) ??
     plans.find((plan) => normalizeText(plan.name).includes("500 mega") && normalizeText(plan.name).includes("chip"));
@@ -1189,10 +1313,8 @@ function findUpsellCandidate(selectedPlan: PlanCandidate, plans: PlanCandidate[]
 
   const declined = new Set(memory.declinedUpsellPlanIds ?? []);
   const offered = new Set(memory.offeredUpsellPlanIds ?? []);
-  const targetSpeed = selectedSpeed === 200 ? 350 : selectedSpeed === 400 ? 500 : 0;
-  if (!targetSpeed) return null;
-
-  return plans.find((plan) => planSpeedMbps(plan) === targetSpeed && !declined.has(plan.id) && !offered.has(plan.id)) ?? null;
+  return [...plans].filter(plan => planSpeedMbps(plan) > selectedSpeed && !declined.has(plan.id) && !offered.has(plan.id))
+    .sort((a, b) => planSpeedMbps(a) - planSpeedMbps(b))[0] ?? null;
 }
 
 function upsellMessage(selectedPlan: PlanCandidate, upsellPlan: PlanCandidate) {
@@ -1221,7 +1343,10 @@ function upsellMessage(selectedPlan: PlanCandidate, upsellPlan: PlanCandidate) {
     `🔹 ${selectedPlan.name} — ${selectedPrice}/mês`,
     `⭐ ${upsellPlan.name} — ${upsellPrice}/mês`,
     "",
-    `A diferença é de apenas ${formatMoney(difference)} por mês e você leva mais ${upsellSpeed - selectedSpeed} Mega de velocidade. 🚀`,
+    difference > 0
+      ? `A diferença é de ${formatMoney(difference)} por mês e você leva mais ${upsellSpeed - selectedSpeed} Mega de velocidade.`
+      : `Você leva mais ${upsellSpeed - selectedSpeed} Mega de velocidade com mensalidade igual ou menor.`,
+    upsellPlan.description ? `Benefícios do ${upsellPlan.name}:\n${upsellPlan.description}` : "",
     `Quer manter os ${selectedPlan.name} ou prefere aproveitar os ${upsellPlan.name} por ${upsellPrice}?`,
   ].join("\n");
 }
@@ -1255,7 +1380,7 @@ function costBenefitHint(plans: PlanCandidate[]) {
 }
 
 function nextCustomerDataResponse(memory: ChatMemory, prefix = ""): NextBotResponse {
-  if (!memory.name) {
+  if (!memory.name || !fullName(memory.name)) {
     return {
       state: "ASK_NAME",
       memory,
@@ -1263,7 +1388,7 @@ function nextCustomerDataResponse(memory: ChatMemory, prefix = ""): NextBotRespo
     };
   }
 
-  if (!memory.cpfCnpj) {
+  if (!memory.cpfCnpj || !parseDocument(memory.cpfCnpj).valid) {
     return {
       state: "ASK_DOCUMENT",
       memory,
@@ -1271,7 +1396,7 @@ function nextCustomerDataResponse(memory: ChatMemory, prefix = ""): NextBotRespo
     };
   }
 
-  if (!memory.birthDate) {
+  if (!memory.birthDate || Number.isNaN(new Date(memory.birthDate).getTime()) || new Date(memory.birthDate).getTime() > Date.now()) {
     return {
       state: "ASK_BIRTH_DATE",
       memory,
@@ -1279,7 +1404,7 @@ function nextCustomerDataResponse(memory: ChatMemory, prefix = ""): NextBotRespo
     };
   }
 
-  if (!memory.email) {
+  if (!memory.email || !parseEmail(memory.email)) {
     return {
       state: "ASK_EMAIL",
       memory,
@@ -1287,7 +1412,7 @@ function nextCustomerDataResponse(memory: ChatMemory, prefix = ""): NextBotRespo
     };
   }
 
-  if (!memory.billingDueDay) {
+  if (!memory.billingDueDay || !VALID_BILLING_DAYS.includes(memory.billingDueDay)) {
     return {
       state: "ASK_BILLING_DUE_DAY",
       memory,
@@ -1370,21 +1495,24 @@ function selectPlan(text: string, plans: PlanCandidate[]) {
 
 function applyParsedCustomerData(memory: ChatMemory, text: string, state: string) {
   const document = parseDocument(text);
-  const birthDate = parseBirthDate(text);
-  const cep = shouldParseCepForState(text, state, birthDate) ? parseCep(text) : "";
-  const email = parseEmail(text);
-  const billingDay = state === "ASK_BILLING_DUE_DAY" || state === "CORRECTION" ? parseBillingDay(text) : null;
-  const name = extractNameFromText(text);
-
-  if (cep) memory.cep = cep;
-  if (document.valid) {
-    memory.cpfCnpj = document.formatted;
-    memory.documentType = document.type;
-  }
+  const labeledDoc = text.match(/(?:cpf|cnpj)\s*[:=]?\s*([\d.\-/]+)/i)?.[1];
+  const doc = labeledDoc ? parseDocument(labeledDoc) : document;
+  if (doc.valid) { memory.cpfCnpj = doc.formatted; memory.documentType = doc.type; }
+  const dateSource = text.match(/\b\d{1,2}[/.]\d{1,2}[/.]\d{4}\b/)?.[0];
+  const birthDate = dateSource ? parseBirthDate(dateSource) : state === "ASK_BIRTH_DATE" ? parseBirthDate(text) : null;
   if (birthDate) memory.birthDate = birthDate.toISOString();
-  if (email) memory.email = email;
-  if (billingDay) memory.billingDueDay = billingDay;
-  if ((state === "ASK_NAME" || state === "CORRECTION" || hasExplicitNameMarker(text)) && name) memory.name = name;
+  const cep = state === "ASK_CEP" ? parseCep(text) : text.match(/\bcep\s*[:=]?\s*(\d{5}[- ]?\d{3})\b/i)?.[1];
+  if (cep) memory.cep = onlyDigits(cep);
+  const email = parseEmail(text); if (email) memory.email = email;
+  const complement = text.match(/complemento\s*[:=]?\s*([^;\n,]+)/i)?.[1];
+  if (complement && complement.length < 160) memory.complement = normalizeComplement(complement.trim());
+  const billingSource = text.match(/(?:vencimento|vencer|dia)\s*[:=]?\s*(\d{1,2})\b/i)?.[1];
+  const billing = state === "ASK_BILLING_DUE_DAY" ? parseBillingDay(text) : billingSource ? parseBillingDay(billingSource) : null;
+  if (billing) memory.billingDueDay = billing;
+  const name = extractLabeledName(text) || (state === "ASK_NAME" ? fullName(text) : "");
+  if (name) memory.name = name;
+  const number = text.match(/(?:n[uú]mero|n[º°])\s*[:=]?\s*(\d{1,6}[a-z]?)/i)?.[1];
+  if (number) memory.streetNumber = number;
 }
 
 function shouldParseCepForState(text: string, state: string, birthDate: Date | null) {
@@ -1598,6 +1726,7 @@ function parsePortugueseNumber(tokens: string[]) {
 
 function isHandoffRequest(text: string) {
   const normalized = normalizeText(text);
+  if (/nao (quero|preciso).*atendente|nao.*humano/.test(normalized)) return false;
   return ["atendente", "humano", "consultor", "vendedor", "falar com alguem", "falar com uma pessoa"].some((term) => normalized.includes(term));
 }
 
@@ -1646,7 +1775,7 @@ function callResumePrompt(
   if (state === "START") {
     return greetingMessage(agent?.name);
   }
-  if (state === "FINISHED") return "Seu atendimento já está registrado. Se precisar, envie reiniciar para começar novamente.";
+  if (state === "FINISHED") return "";
   if (state === "HUMAN_HANDOFF") return "Seu atendimento está sinalizado para uma consultora humana continuar por aqui.";
   return promptForState(state, getFirstName(memory.name));
 }
@@ -1756,15 +1885,8 @@ function isAlternativeRequest(text: string) {
   return ["outro", "outra", "outra opcao", "outra opção", "prefiro outro"].some((term) => normalized.includes(normalizeText(term)));
 }
 
-function isPositive(text: string) {
-  const normalized = normalizeText(text);
-  return ["sim", "isso", "esse", "essa", "confirmo", "correto", "ta certo", "esta certo", "pode ser", "fechado", "quero"].some((term) => normalized === term || normalized.includes(term));
-}
-
-function isNegative(text: string) {
-  const normalized = normalizeText(text);
-  return ["nao", "não", "errado", "corrigir", "alterar", "mudar"].some((term) => normalized.includes(normalizeText(term)));
-}
+function isPositive(text: string) { return isExplicitConfirmation(text); }
+function isNegative(text: string) { return /^(nao (esta|ta|ficou) (correto|certo)|esta errado|tem erro)/.test(normalizeText(text)) || isExplicitRefusal(text) || /^(corrigir|alterar|mudar|errado)(?:\s|$)/.test(normalizeText(text)); }
 
 function isPlanRefusal(text: string) {
   const normalized = normalizeText(text);
@@ -1819,7 +1941,7 @@ function greetingMessage(agentName?: string) {
   const greeting =
     hour < 12 ? "bom dia" : hour < 18 ? "boa tarde" : "boa noite";
 
-  return `Olá, ${greeting}! 😊 Tudo bem?\nEu sou a ${agentName ?? "Lily"}, consultora de planos de internet fibra. 💙\nTrabalho com planos da Claro, Giga+ e Desktop e vou te ajudar a encontrar a melhor opção para sua casa. 🛜✨\n\nPara começar, pode me informar o CEP da instalação, por favor? 📍`;
+  return `Olá, ${greeting}! 😊 Tudo bem?\nEu sou a ${agentName ?? "Lily"}, consultora de planos de internet fibra. 💙\nVou iniciar o seu atendimento, tudo bem? O primeiro passo é eu verificar se tem disponibilidade para sua casa. 🛜✨\n\nPara começar, pode me informar o CEP da instalação, por favor? 📍`;
 }
 
 function agentConfig(agent: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>) {
@@ -1848,4 +1970,67 @@ function formatAgentRules(rules: unknown) {
     .filter((value) => value !== false && value !== null && value !== undefined)
     .map((value) => `- ${String(value)}`)
     .join("\n") || "Nenhuma regra adicional configurada.";
+}
+
+function applyValidatedExtractedData(memory: ChatMemory, data: ExtractedCustomerData) {
+  if (data.fullName && fullName(data.fullName)) memory.name = fullName(data.fullName);
+  if (data.cep && /^\d{8}$/.test(onlyDigits(data.cep))) memory.cep = onlyDigits(data.cep);
+  if (data.cpf) {
+    const doc = parseDocument(data.cpf);
+    if (doc.valid) { memory.cpfCnpj = doc.formatted; memory.documentType = doc.type; }
+  }
+  const birth = data.birthDate ? parseBirthDate(data.birthDate) : null;
+  if (birth) memory.birthDate = birth.toISOString();
+  if (data.email && parseEmail(data.email) === data.email.toLowerCase().trim()) memory.email = parseEmail(data.email);
+  if (data.streetNumber && parseSimpleNumber(data.streetNumber)) memory.streetNumber = parseSimpleNumber(data.streetNumber);
+  applyExtractedAddress(memory, data);
+}
+
+function conflictingFields(text: string) {
+  const emails = [...new Set(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [])];
+  if (emails.length > 1) return "Recebi dois e-mails diferentes. Qual deles devo usar?";
+  const ceps = [...new Set([...text.matchAll(/\bcep\s*[:=]?\s*(\d{5}[- ]?\d{3})\b/gi)].map(m => onlyDigits(m[1])))];
+  if (ceps.length > 1) return "Recebi dois CEPs diferentes. Qual é o CEP da instalação?";
+  if (!text.includes("?") && /quero|prefiro/.test(normalizeText(text)) && /\b600\b/.test(text) && /\b800\b/.test(text)) return "Você mencionou dois planos. Prefere 600 MEGA ou 800 MEGA?";
+}
+
+function validCorrection(field: CorrectionField, text: string, plans: PlanCandidate[]) {
+  switch (field) {
+    case "name": return Boolean(fullName(text));
+    case "document": return parseDocument(text).valid;
+    case "birthDate": return Boolean(parseBirthDate(text));
+    case "email": return Boolean(parseEmail(text));
+    case "address": return Boolean(parseCep(text) || parseSimpleNumber(text) || /complemento|apartamento|bloco/i.test(text));
+    case "billing": return Boolean(parseBillingDay(text));
+    case "plan": return Boolean(selectPlan(text, plans));
+  }
+}
+
+function afterKnownAddress(memory: ChatMemory, plans: PlanCandidate[]): NextBotResponse {
+  if (!memory.streetNumber) return { state: "ASK_STREET_NUMBER", memory, reply: promptForState("ASK_STREET_NUMBER") };
+  if (memory.complement === undefined) return { state: "ASK_COMPLEMENT", memory, reply: "O endereço tem complemento? Se não tiver, responda Não." };
+  if (!memory.planId) return { state: "CHOOSE_PLAN", memory, reply: `${formatPlanList(plans)}\n\nQual plano prefere?` };
+  return nextCustomerDataResponse(memory, `Plano escolhido: ${memory.planName} por ${formatMoney(memory.planValue ?? 0)}/mês.\n\n`);
+}
+
+function applyBatchData(memory: ChatMemory, parts: string[], state: string, plans: PlanCandidate[]) {
+  let cursor = state;
+  for (const part of parts) {
+    applyParsedCustomerData(memory, part, cursor);
+    if (["START", "ASK_CEP"].includes(cursor)) {
+      const cep = parseCep(part);
+      if (cep) { memory.cep = cep; cursor = "ASK_STREET_NUMBER"; }
+    } else if (cursor === "ASK_STREET_NUMBER") {
+      const number = parseSimpleNumber(part);
+      if (number) { memory.streetNumber = number; cursor = "ASK_COMPLEMENT"; }
+    } else if (cursor === "ASK_COMPLEMENT" && !looksLikeQuestion(part) && !parseEmail(part) && !parseDocument(part).valid) {
+      memory.complement = normalizeComplement(part); cursor = "CHOOSE_PLAN";
+    } else if (cursor === "CHOOSE_PLAN") {
+      const plan = selectPlan(part, plans);
+      if (plan) { memory.planId = plan.id; memory.planName = plan.name; memory.planValue = Number(plan.price); cursor = "ASK_NAME"; }
+    } else if (cursor === "ASK_NAME" && memory.name) cursor = "ASK_DOCUMENT";
+    else if (cursor === "ASK_DOCUMENT" && memory.cpfCnpj) cursor = "ASK_BIRTH_DATE";
+    else if (cursor === "ASK_BIRTH_DATE" && memory.birthDate) cursor = "ASK_EMAIL";
+    else if (cursor === "ASK_EMAIL" && memory.email) cursor = "ASK_BILLING_DUE_DAY";
+  }
 }

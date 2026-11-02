@@ -1,4 +1,5 @@
 import "server-only";
+import { currentEvolutionInstance } from "@/services/evolution-context";
 
 import { Buffer } from "node:buffer";
 import type { Prisma } from "@prisma/client";
@@ -82,11 +83,12 @@ async function parseApiResponse(response: Response) {
 }
 
 export function getEvolutionConfig() {
-  const baseUrl = trimTrailingSlash(process.env.EVOLUTION_API_URL?.trim() || "");
-  const apiKey = process.env.EVOLUTION_API_KEY?.trim() || "";
-  const instanceName = process.env.EVOLUTION_INSTANCE?.trim() || "";
-  const instanceToken = process.env.EVOLUTION_INSTANCE_TOKEN?.trim() || "";
-  const defaultNumber = process.env.EVOLUTION_DEFAULT_NUMBER?.trim() || "";
+  const selected = currentEvolutionInstance();
+  const baseUrl = selected.apiUrl;
+  const apiKey = selected.apiKey;
+  const instanceName = selected.instanceName;
+  const instanceToken = selected.apiKey;
+  const defaultNumber = selected.number;
   const encodedInstanceName = encodeURIComponent(instanceName);
 
   if (!baseUrl || !apiKey || !instanceName) {
@@ -418,12 +420,8 @@ function parseWhatsappNumberCheck(result: unknown, fallbackPhone: string): Check
 }
 
 export function isValidEvolutionWebhook(request: Request, body: string) {
-  const expectedTokens = [
-    process.env.EVOLUTION_WEBHOOK_SECRET?.trim(),
-    process.env.EVOLUTION_API_KEY?.trim(),
-    process.env.EVOLUTION_INSTANCE_TOKEN?.trim(),
-  ].filter((value): value is string => Boolean(value));
-  if (!expectedTokens.length) return true;
+  const selected = currentEvolutionInstance();
+  const expectedTokens = [selected.apiKey, ...(selected.instanceName === process.env.EVOLUTION_INSTANCE ? [process.env.EVOLUTION_API_KEY] : [])].filter(Boolean);
 
   const authHeader = request.headers.get("authorization");
   const authToken = authHeader?.replace(/^Bearer\s+/i, "").trim();
@@ -444,7 +442,7 @@ export function isValidEvolutionWebhook(request: Request, body: string) {
     payloadApiKey,
   ].filter((value): value is string => Boolean(value?.trim()));
 
-  if (!candidates.length) return body.length > 0;
+  if (!candidates.length) return false;
   return candidates.some((candidate) => expectedTokens.includes(candidate));
 }
 

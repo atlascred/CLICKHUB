@@ -1,3 +1,5 @@
+import { withEvolutionInstance, scopedEvolutionId } from "@/services/evolution-context";
+import { resolveSelectedAgent } from "@/services/whatsapp-agent";
 import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { permissions } from "@/constants/permissions";
@@ -12,6 +14,7 @@ import { normalizePhone } from "@/services/validators";
 
 type SendBody = {
   to?: string;
+  agentId?: string;
   message?: string;
   audio?: string;
   media?: string;
@@ -36,8 +39,15 @@ export async function POST(request: Request) {
     if (usingMeta && body.audio) {
       return NextResponse.json(errorResponse("Envio manual de audio pela Meta ainda nao esta habilitado.", "VALIDATION_ERROR"), { status: 422 });
     }
-    const resolvedPhone = usingMeta ? await checkMetaWhatsAppNumber(body.to) : await resolveEvolutionPhone(body.to);
-    const destinationPhone = resolvedPhone.phone || normalizePhone(body.to);
+    const existing = body.conversationId ? await prisma.chatConversation.findFirst({ where: { id: body.conversationId, deletedAt: null } }) : null;
+    if (body.conversationId && !existing) throw new Error("Conversa não encontrada.");
+    if (existing && normalizePhone(existing.phone) !== normalizePhone(body.to)) throw new Error("O destino não corresponde à conversa selecionada.");
+    if (existing?.agentId && body.agentId && existing.agentId !== body.agentId) throw new Error("A conversa pertence a outro agente.");
+    const agent = usingMeta ? null : await resolveSelectedAgent(existing?.agentId || body.agentId);
+    const destinationInput = body.to;
+    const execute = async () => {
+    const resolvedPhone = usingMeta ? await checkMetaWhatsAppNumber(destinationInput) : await resolveEvolutionPhone(destinationInput);
+    const destinationPhone = resolvedPhone.phone || normalizePhone(destinationInput);
     const result = usingMeta
       ? body.media && body.kind
         ? await sendMetaMediaMessage({
@@ -62,9 +72,11 @@ export async function POST(request: Request) {
           })
         : await sendEvolutionTextMessage({ to: destinationPhone, message: body.message as string, delayTypingSeconds: 2 });
 
-    const providerId = resolveWhatsAppMessageId(result);
+    const rawProviderId = resolveWhatsAppMessageId(result);
+    const providerId = rawProviderId && agent?.zapiInstanceId ? scopedEvolutionId(agent.zapiInstanceId, rawProviderId) : rawProviderId;
     const conversation = await findOrCreateConversation({
       id: body.conversationId,
+      agentId: agent?.id,
       phone: destinationPhone,
       contactName: body.contactName,
       ownerUserId: user.id,
@@ -82,6 +94,7 @@ export async function POST(request: Request) {
         sentAt: new Date(),
         rawPayload: {
           provider: usingMeta ? "meta" : "evolution",
+          instanceName: agent?.zapiInstanceId,
           kind: messageKind,
           media: body.media ? { source: body.media, kind: body.kind, mimeType: body.mimeType, fileName: body.fileName } : undefined,
           result: normalizeJson(result),
@@ -94,6 +107,8 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json(successResponse("Mensagem enviada.", { result, conversationId: conversation.id }));
+    };
+    return agent?.zapiInstanceId ? await withEvolutionInstance(agent.zapiInstanceId, execute) : await execute();
   } catch (error) {
     const authError = authErrorResponse(error);
     if (authError) return authError;
@@ -104,15 +119,15 @@ export async function POST(request: Request) {
   }
 }
 
-async function findOrCreateConversation(input: { id?: string; phone: string; contactName?: string; ownerUserId: string; tags?: unknown }) {
+async function findOrCreateConversation(input: { id?: string; agentId?: string; phone: string; contactName?: string; ownerUserId: string; tags?: unknown }) {
   const tags = normalizeTags(input.tags);
   if (input.id) {
-    const existing = await prisma.chatConversation.findFirst({ where: { id: input.id, deletedAt: null } });
+    const existing = await prisma.chatConversation.findFirst({ where: { id: input.id, deletedAt: null, ...(input.agentId ? { OR: [{ agentId: input.agentId }, { agentId: null }] } : {}) } });
     if (existing) return mergeConversationTags(existing, tags);
   }
 
   const existingByPhone = await prisma.chatConversation.findFirst({
-    where: { phone: input.phone, deletedAt: null },
+    where: { phone: input.phone, agentId: input.agentId ?? null, deletedAt: null },
     orderBy: { updatedAt: "desc" },
   });
   if (existingByPhone) return mergeConversationTags(existingByPhone, tags);
@@ -120,6 +135,7 @@ async function findOrCreateConversation(input: { id?: string; phone: string; con
   return prisma.chatConversation.create({
     data: {
       phone: input.phone,
+      agentId: input.agentId,
       state: "MANUAL",
       ownerUserId: input.ownerUserId,
       memory: {
