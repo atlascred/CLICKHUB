@@ -1140,8 +1140,12 @@ function formatPlanList(plans: PlanCandidate[]) {
   const numberEmojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"];
   return [
     "🛜 PLANOS DE INTERNET FIBRA",
-    ...plans.map((plan, index) => `${numberEmojis[index] ?? `${index + 1}.`} ${plan.name} — ${formatMoney(Number(plan.price))}/mês${planListBadge(plan)}`),
-  ].join("\n");
+    ...plans.map((plan, index) => {
+      const title = `${numberEmojis[index] ?? `${index + 1}.`} ${plan.name} — ${formatMoney(Number(plan.price))}/mês${planListBadge(plan)}`;
+      const benefits = plan.description?.split("\n").filter(Boolean).map((line) => `• ${line}`).join("\n");
+      return benefits ? `${title}\n${benefits}` : title;
+    }),
+  ].join("\n\n");
 }
 
 function planListBadge(plan: PlanCandidate) {
@@ -1342,6 +1346,7 @@ function selectPlan(text: string, plans: PlanCandidate[]) {
     { terms: ["400", "quatrocentos"], chip: false },
     { terms: ["500", "quinhentos"], chip: false },
     { terms: ["600", "seiscentos"], chip: false },
+    { terms: ["800", "oitocentos"], chip: false },
     { terms: ["1gb", "1 giga", "um giga", "1000"], chip: false },
   ];
   const wantsChip = normalized.includes("chip") || normalized.includes("celular") || normalized.includes("35gb");
@@ -1784,19 +1789,12 @@ function limitText(value: string, maxLength: number) {
 }
 
 function planOptionTitle(plan: PlanCandidate) {
-  const normalized = normalizeText(plan.name);
-  if (normalized.includes("200 mega")) return "200 Mega";
-  if (normalized.includes("350 mega")) return "350 Mega";
-  if (normalized.includes("400 mega")) return "400 Mega";
-  if (normalized.includes("500 mega")) return "500 Mega";
-  if (normalized.includes("600 mega")) return "600 Mega";
-  if (normalized.includes("1 giga")) return "1 Giga";
   return plan.name;
 }
 
 function planOptionDescription(plan: PlanCandidate) {
   const details = [];
-  if (plan.description) details.push(plan.description.replace(/\s+\+\s+Globoplay.*$/i, "").trim());
+  if (plan.description) details.push(plan.description.replace(/\s+/g, " ").trim());
   details.push(`${formatMoney(Number(plan.price))}/mês`);
   return details.join(" - ");
 }

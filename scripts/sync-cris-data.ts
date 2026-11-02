@@ -1,67 +1,6 @@
 import { prisma } from "@/lib/prisma";
 
-const plans = [
-  {
-    name: "200 Mega",
-    speed: "200 Mega",
-    price: 89.99,
-    description: "Internet fibra",
-    order: 1,
-  },
-  {
-    name: "350 Mega",
-    speed: "350 Mega",
-    price: 89.9,
-    description: "Internet fibra",
-    order: 2,
-  },
-  {
-    name: "400 Mega",
-    speed: "400 Mega",
-    price: 94.99,
-    description: "Internet fibra",
-    order: 3,
-  },
-  {
-    name: "500 Mega",
-    speed: "500 Mega",
-    price: 99.9,
-    description: "Internet fibra",
-    order: 4,
-  },
-  {
-    name: "600 Mega",
-    speed: "600 Mega",
-    price: 109.9,
-    description: "Internet fibra",
-    order: 5,
-  },
-  {
-    name: "1 Giga",
-    speed: "1 Giga",
-    price: 179.9,
-    description: "Internet fibra",
-    order: 6,
-  },
-] as const;
-
-const legacyPlanNames = [
-  "Plano legado 300 Mega",
-  "Plano legado 500 Mega",
-  "Plano legado 700 Mega",
-  "Plano 350Mb",
-  "Plano 500Mb",
-  "Plano 1Gb",
-  "Plano 250Mb",
-  "Plano 250Mb + Chip",
-  "Combo Hexa - 600 (Wi-Fi 600Mb + 35Gb celular)",
-  "Plano 1Gb + Chip",
-  "250 MEGA - Internet + Chip 35GB (Grátis)",
-  "350 MEGA - Internet",
-  "500 MEGA - Internet + Chip 35GB (Grátis)",
-  "1 GIGA - Internet + Chip 35GB (Grátis)",
-  "1 GIGA - Internet",
-] as const;
+import { syncCommercialPlans } from "./lib/commercial-plans";
 
 const personality =
   "Nome: Lily. Genero/Sexo: Feminino. Cargo: Consultora comercial de planos de internet fibra. A Lily conversa como uma consultora comercial pelo WhatsApp. Seu objetivo e ajudar leads vindos do Meta Ads a escolherem o melhor plano disponivel para a casa deles. Ela e simpatica, vendedora, consultiva, educada, paciente, rapida, objetiva, cordial e bem humorada. Utiliza poucos emojis, nunca parece robo, nunca fala que e IA, nunca fala que e secretaria eletronica, nunca responde de maneira fria, adapta a resposta ao contexto da conversa e utiliza o nome do cliente quando ja souber.";
@@ -168,33 +107,7 @@ const flow = {
 };
 
 async function syncPlans() {
-  await prisma.plan.updateMany({
-    where: { name: { in: [...legacyPlanNames] }, deletedAt: null },
-    data: { active: false, deletedAt: new Date() },
-  });
-
-  for (const plan of plans) {
-    const existing = await prisma.plan.findFirst({
-      where: { name: plan.name, deletedAt: null },
-      select: { id: true },
-    });
-
-    if (existing) {
-      await prisma.plan.update({
-        where: { id: existing.id },
-        data: { ...plan, active: true, deletedAt: null },
-      });
-      continue;
-    }
-
-    await prisma.plan.create({ data: { ...plan, active: true } });
-  }
-
-  return prisma.plan.findMany({
-    where: { deletedAt: null, active: true },
-    orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, price: true },
-  });
+  return syncCommercialPlans(prisma);
 }
 
 async function syncLily(planIds: string[]) {
