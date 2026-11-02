@@ -200,3 +200,8 @@ O diretório de destino deve estar livre para evitar conflito com um arquivament
 Após enviar a confirmação de solicitação registrada com sucesso, a conversa entra em FINISHED e não recebe mais respostas automáticas. A verificação ocorre antes da interpretação conversacional da IA e também imediatamente antes de enviar uma resposta que já estivesse sendo processada. Novas mensagens permanecem no histórico. Perguntas, agradecimentos, troca de plano, áudio e o comando reiniciar não reativam o fluxo encerrado. Chamadas também não produzem resposta automática. O atendimento manual continua disponível e uma reabertura da automação exige ação explícita da equipe.
 
 Backups desta mudança: `.backups/lily-fim-fluxo-20261102/`. Os testes 71–73 verificam silêncio após o sucesso, ausência de novas chamadas de interpretação conversacional, manutenção do histórico, chamadas posteriores e encerramento concorrente. A suíte completa e o build local passaram novamente. Alteração local, sem publicação.
+
+
+## Publicação autorizada — 02/11/2026
+
+Após autorização explícita do usuário, as melhorias foram publicadas junto ao isolamento CLICK/GIGA CLICK no commit `964f5be`. A suíte atual soma 94 cenários aprovados. A publicação e os dois webhooks foram conferidos em produção; não houve mensagem ou lead de teste. Ver `GIGA_CLICK_ISOLAMENTO.md` para o estado atual e as evidências. Os relatos anteriores de alteração somente local descrevem o estado antes desta autorização.

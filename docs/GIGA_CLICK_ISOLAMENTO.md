@@ -2,6 +2,16 @@
 
 Data: 02/11/2026.
 
+## Publicação concluída — 02/11/2026
+
+Publicação autorizada pelo usuário e concluída. O código do commit `964f5be` está em produção em https://clickhub-peach.vercel.app, deployment `dpl_CmV2sLPRfs8eaZ9htdkWPUVot2UF`.
+
+CLICK e GIGA CLICK foram verificadas como conectadas, com os dois webhooks ativos e probes autenticados HTTP 200. A credencial da GIGA foi recusada no webhook da CLICK (HTTP 401). Login, seletor de agentes, catálogos e filtros de conversas foram conferidos em produção. Os preços de cada agente permanecem corretos. As operações SQL de lock, JSON e proteção humana também foram verificadas em uma transação revertida, sem persistir registros de teste.
+
+Nenhuma mensagem de teste foi enviada a cliente e nenhum lead de teste foi criado. A suíte de 94 cenários passou novamente antes da publicação. Evidência local: `.test-output/giga-production-validation.json`.
+
+O restante deste documento registra a preparação anterior e o procedimento reproduzível; as indicações de ativação pendente abaixo são históricas e foram concluídas nesta publicação.
+
 ## Resultado e estado atual
 
 O sistema continua sendo um único CLICKHUB, com os mesmos usuários e módulos. Foram separados os agentes, as instâncias WhatsApp, credenciais, catálogos, conversas, memória, histórico, controles de bloqueio/atendimento humano, IDs de mensagens, filas e origens de envio.

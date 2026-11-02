@@ -1,6 +1,6 @@
 SCRIPT COMPLETO DE ATENDIMENTO — LILY / CLICK HUBNET
 ===================================================
-Versão: 02/11/2026 — melhorias locais aguardando publicação
+Versão: 02/11/2026 — melhorias publicadas após autorização
 Canal: WhatsApp, integrado ao CLICKHUB pela Evolution API.
 
 Este arquivo é o roteiro comercial e operacional da Lily, baseado no fluxo
@@ -654,8 +654,8 @@ Instância configurada: CLICK.
 - Lily ativa e vinculada aos três planos deste roteiro.
 - Catálogo atualizado no Supabase e na publicação do CLICKHUB.
 - Fluxo estruturado disponível para atendimento por texto.
-- As melhorias de inteligência desta versão foram preparadas localmente,
-  sem publicação automática nem alteração do banco de produção.
+- As melhorias desta versão foram publicadas após autorização explícita.
+  CLICK e GIGA CLICK usam agentes, planos e históricos separados no CRM.
 - A OpenAI não foi configurada na Vercel nesta sessão. Respostas livres
   com IA, transcrição e leitura automática de documentos dependem de uma
   chave válida configurada e da disponibilidade desses serviços.
