@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { ChatbotEngineService } from '../src/modules/chatbot/services/chatbot-engine.service';
 import { commercialPlans } from '../scripts/lib/commercial-plans';
-import { MessageBatchService, type BatchState, type BatchStore } from '../src/modules/chatbot/services/message-batch.service';
+import { PrismaBatchStore, MessageBatchService, type BatchState, type BatchStore } from '../src/modules/chatbot/services/message-batch.service';
 import { interpretIncomingMedia } from '../src/modules/chatbot/services/incoming-media.service';
 import { safeInterpretation, safeFreeReply } from '../src/modules/chatbot/intelligence';
 import { officialAnswer } from '../src/modules/chatbot/knowledge';
@@ -536,4 +536,80 @@ test('94 — ativação validada configura somente GIGA, sem tocar CLICK ou envi
   const {activateGigaWebhook}=require('../scripts/lib/activate-giga-webhook');const calls:any[]=[];
   await activateGigaWebhook({instanceName:'GIGA CLICK',apiUrl:'https://evo.test',apiKey:'fake'},'https://app.test/webhook',async (url:any,options:any)=>{calls.push({url:String(url),options});return new Response(JSON.stringify(String(url).includes('connectionState')?{instance:{state:'open'}}:{data:{isolationVersion:1}}),{status:200});});
   const edits=calls.filter(c=>c.url.includes('/webhook/set/'));assert.equal(edits.length,1);assert.ok(edits[0].url.endsWith('GIGA%20CLICK'));assert.ok(!calls.some(c=>c.url.includes('/message/send')));assert.deepEqual(JSON.parse(edits[0].options.body).webhook.events,['MESSAGES_UPSERT','MESSAGES_UPDATE','PRESENCE_UPDATE']);
+});
+
+
+test('95 — fila aguarda localmente e usa apenas enqueue, claim e finalize', async () => {
+  const memory = new MemoryBatchStore(); let changes = 0, now = 1000, processed = 0;
+  const store: BatchStore = { change: async (key, edit) => { changes++; return memory.change(key, edit); } };
+  const sleeps: number[] = [];
+  const batch = new MessageBatchService(store, 300, () => now, async ms => { sleeps.push(ms); now += ms; });
+  await batch.accept('fast', { providerId: 'fast-1', body: 'oi' }, async () => { processed++; });
+  assert.equal(changes, 3); assert.deepEqual(sleeps, [300]); assert.equal(processed, 1);
+  await batch.accept('fast', { providerId: 'fast-1', body: 'oi' }, async () => { processed++; });
+  assert.equal(changes, 4); assert.equal(processed, 1); assert.deepEqual(sleeps, [300]);
+});
+
+function casFixture() {
+  let value: any = null; let reads = 0, writes = 0, conflicts = 0;
+  const db = { appSetting: {
+    findUnique: async () => { reads++; return value ? { value: clone(value) } : null; },
+    create: async ({ data }: any) => { writes++; if (value) throw Object.assign(new Error('unique'), {code:'P2002'}); value = clone(data.value); },
+    updateMany: async ({ where, data }: any) => {
+      writes++; if (conflicts > 0) { conflicts--; return { count: 0 }; }
+      if (JSON.stringify(value) !== JSON.stringify(where.value.equals)) return {count:0};
+      value = clone(data.value); return {count:1};
+    },
+  } };
+  return { db, store: new PrismaBatchStore(db as any), stats: () => ({ reads, writes, value }), conflict: (n:number) => { conflicts=n; } };
+}
+test('96 — CAS preserva enqueues concorrentes e leitura sem mudança não grava', async () => {
+  const f = casFixture();
+  await Promise.all(Array.from({ length: 6 }, (_, i) => f.store.change('queue', state => { state.pending.push({providerId:String(i),body:'oi'}); })));
+  const before = f.stats(); assert.equal(before.value.pending.length,6);
+  assert.equal(new Set(before.value.pending.map((m:any)=>m.providerId)).size,6);
+  assert.equal(await f.store.change('queue', state=>state.pending.length),6);
+  assert.equal(f.stats().writes,before.writes); assert.equal(f.stats().reads,before.reads+1);
+});
+test('97 — CAS repete conflito e falha sem confirmar quando esgota tentativas', async () => {
+  const f=casFixture(); await f.store.change('queue',state=>{state.lastAt=1;});
+  f.conflict(2); await f.store.change('queue',state=>{state.lastAt=2;}); assert.equal(f.stats().value.lastAt,2);
+  f.conflict(8); await assert.rejects(f.store.change('queue',state=>{state.lastAt=3;}),/reentrega/);
+  assert.equal(f.stats().value.lastAt,2);
+});
+test('98 — cadastro e respostas oficiais dispensam classificação por IA', async () => {
+  let calls=0;
+  const ai={interpretConversation:async()=>{calls++;return null;},answerCommercialQuestion:async()=>''};
+  for(const [state,message] of [['ASK_CEP','01001000'],['ASK_NAME','Cliente Simulado'],['ASK_DOCUMENT',fixtureDocument()],['ASK_DOCUMENT','123.456.789-00'],['ASK_BIRTH_DATE','01/01/1995'],['ASK_EMAIL','teste@example.com'],['ASK_BILLING_DUE_DAY','dia 20'],['ASK_EMAIL','A instalação é gratuita?']]) {
+    const s=simulator('entrada determinística '+state,{state,ai}); await s.say(message);
+  }
+  assert.equal(calls,0);
+  await simulator('pergunta livre',{state:'ASK_EMAIL',ai}).say('Como funciona essa tecnologia para minha casa?');
+  assert.equal(calls,1);
+});
+test('99 — agente resolvido reutiliza catálogo e rejeita instância divergente',async()=>{
+  const s=simulator('catálogo da requisição',{state:'ASK_COMPLEMENT'});
+  s.repo.getAgentByInstance=async()=>{throw new Error('consulta redundante');};
+  s.repo.listActivePlans=async()=>{throw new Error('consulta redundante');};
+  const agent={id:'lily',name:'Lily',zapiInstanceId:'CLICK',plans,enableReplyDelay:false,enableTyping:false};
+  await s.say('não',undefined,{instanceId:'CLICK',resolvedAgent:agent});
+  assert.equal(s.conversation.state,'CHOOSE_PLAN'); assert.equal(s.sends.length,1);
+  const count=s.messages.size;
+  await assert.rejects(s.say('oi',undefined,{instanceId:'GIGA CLICK',resolvedAgent:agent}),/não corresponde/);
+  assert.equal(s.messages.size,count); assert.equal(s.sends.length,1);
+});
+test('100 — número autenticado e endereço local completo evitam chamadas externas',async()=>{
+  const s=simulator('atalhos sem rede',{state:'ASK_CEP'});
+  assert.equal(await (s.engine as any).resolveEvolutionDestinationPhone('5511900000000'),'5511900000000');
+  await s.say('01001000'); assert.equal(s.conversation.state,'ASK_STREET_NUMBER');
+});
+test('101 — persistência sem readback mantém escrita e dispensa somente leitura posterior',async()=>{
+  let writes=0,reads=0;
+  const repo=new ChatbotRepository({$executeRaw:async()=>{writes++;return 1;},chatConversation:{findUnique:async()=>{reads++;return {id:'test'};}}} as any);
+  assert.equal(await repo.updateConversation({id:'test',state:'ASK_EMAIL',memory:{}},false),null);
+  assert.equal(writes,1);assert.equal(reads,0);
+  assert.deepEqual(await repo.updateConversation({id:'test',state:'ASK_EMAIL',memory:{}}),{id:'test'});
+  assert.equal(writes,2);assert.equal(reads,1);
+  const blocked=new ChatbotRepository({$executeRaw:async()=>0} as any);
+  await assert.rejects(blocked.updateConversation({id:'test',state:'ASK_EMAIL',memory:{}},false),/assumida ou bloqueada/);
 });

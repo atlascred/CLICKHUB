@@ -33,7 +33,8 @@ export class ChatbotRepository {
   }
 
   async findOrCreateConversation(phone: string, agentId?: string) {
-    const protectedConversation = await this.db.chatConversation.findFirst({
+    const [protectedConversation, existing] = await Promise.all([
+      this.db.chatConversation.findFirst({
       where: { phone, agentId: agentId ?? null, deletedAt: null, OR: [
         { state: { in: ["BLOCKED", "HUMAN_HANDOFF", "MANUAL"] } },
         { memory: { path: ["humanTakeover"], equals: true } },
@@ -41,12 +42,13 @@ export class ChatbotRepository {
       ] },
       include: { messages: { orderBy: { createdAt: "desc" }, take: 10 } },
       orderBy: { updatedAt: "desc" },
-    });
-    if (protectedConversation) return protectedConversation;
-    const existing = await this.db.chatConversation.findFirst({
+    }),
+      this.db.chatConversation.findFirst({
       where: { phone, agentId: agentId ?? null, deletedAt: null },
       include: { messages: { orderBy: { createdAt: "desc" }, take: 10 } },
-    });
+    }),
+    ]);
+    if (protectedConversation) return protectedConversation;
 
     if (existing) {
       return existing;
@@ -241,7 +243,7 @@ export class ChatbotRepository {
     state: string;
     memory: Prisma.InputJsonValue;
     leadId?: string;
-  }) {
+  }, readBack = true) {
     const count = await this.db.$executeRaw`
       UPDATE "ChatConversation"
       SET "state" = ${input.state}, "memory" = ${JSON.stringify(input.memory)}::jsonb,
@@ -252,7 +254,7 @@ export class ChatbotRepository {
         AND "state" NOT IN ('BLOCKED', 'HUMAN_HANDOFF', 'MANUAL', 'FINISHED')
     `;
     if (!count) throw new Error("Conversa assumida ou bloqueada durante o processamento.");
-    return this.db.chatConversation.findUnique({ where: { id: input.id } });
+    return readBack ? this.db.chatConversation.findUnique({ where: { id: input.id } }) : null;
   }
 
   async getConversationControl(id: string) {

@@ -121,6 +121,7 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
         ? Object.assign({}, ...messages.map(m => m.extractedData ?? {})) : undefined,
       rawPayload: messages[0].rawPayload,
       instanceId: instanceName,
+      resolvedAgent: agent,
       provider: "evolution",
     }));
 

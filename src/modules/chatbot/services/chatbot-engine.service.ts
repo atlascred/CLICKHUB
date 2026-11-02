@@ -89,20 +89,25 @@ export class ChatbotEngineService {
     extractedData?: ExtractedCustomerData;
     provider?: "zapi" | "evolution" | "meta";
     batchMessages?: Array<{ providerId: string; body: string; rawPayload?: Prisma.InputJsonValue }>;
+    resolvedAgent?: NonNullable<Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>>;
   }) {
     const phone = normalizeWhatsappPhone(input.phone);
     let alreadyReceived = false;
 
     if (input.providerId) {
-      const receipt = await this.chatbotRepository.findReplyReceipt(input.providerId);
+      const [receipt, received] = await Promise.all([
+        this.chatbotRepository.findReplyReceipt(input.providerId),
+        this.chatbotRepository.findMessageByProviderId(input.providerId),
+      ]);
       if (receipt) {
         await this.chatbotRepository.finalizePendingReply(input.providerId);
         return { state: "DUPLICATED", replied: false, delayMs: 0 };
       }
-      alreadyReceived = Boolean(await this.chatbotRepository.findMessageByProviderId(input.providerId));
+      alreadyReceived = Boolean(received);
     }
 
-    const agent = await this.chatbotRepository.getAgentByInstance(input.instanceId, input.provider === "evolution");
+    const agent = input.resolvedAgent ?? await this.chatbotRepository.getAgentByInstance(input.instanceId, input.provider === "evolution");
+    if (input.resolvedAgent && input.provider === "evolution" && input.resolvedAgent.zapiInstanceId !== input.instanceId) throw new Error("Agente da requisição não corresponde à instância.");
     const conversation = await this.chatbotRepository.findOrCreateConversation(phone, agent?.id);
     const currentMemory = normalizeMemory(conversation.memory);
 
@@ -153,7 +158,7 @@ export class ChatbotEngineService {
       throw new Error("Entrega incerta; revisão humana necessária antes de reenviar.");
     }
     let interpretation: ConversationInterpretation | null = null;
-    if (!pending && input.message.trim().length > 3 && !hasInjection(input.message)) {
+    if (!pending && needsConversationalInterpretation(input.message, conversation.state, currentMemory, agent?.plans ?? [])) {
       try {
         interpretation = await this.openAiService.interpretConversation({
           message: input.message, state: conversation.state,
@@ -191,11 +196,11 @@ export class ChatbotEngineService {
     await this.chatbotRepository.updateConversation({
       id: conversation.id, state: conversation.state,
       memory: JSON.parse(JSON.stringify({ ...currentMemory, pendingBotReply: prepared })),
-    });
+    }, false);
     await this.chatbotRepository.updateConversation({
       id: conversation.id, state: conversation.state,
       memory: JSON.parse(JSON.stringify({ ...currentMemory, pendingBotReply: { ...prepared, sending: true } })),
-    });
+    }, false);
     const latestControl = await this.chatbotRepository.getConversationControl(conversation.id);
     const latestMemory = normalizeMemory(latestControl?.memory);
     if (latestControl?.state === "FINISHED") return { state: "FINISHED", replied: false, delayMs: 0, finished: true };
@@ -263,13 +268,15 @@ export class ChatbotEngineService {
     await this.chatbotRepository.updateConversation({
       id: conversation.id, state: next.state,
       memory: JSON.parse(JSON.stringify(next.memory)), leadId: next.leadId,
-    });
+    }, false);
 
     return { state: next.state, replied: true, delayMs: typingEnabled ? delaySeconds * 1000 : 0 };
   }
 
   private async resolveEvolutionDestinationPhone(phone: string) {
     try {
+      // This number is already the authenticated inbound WhatsApp sender.
+      if (/^55\d{10,11}$/.test(phone)) return phone;
       const checked = await checkEvolutionWhatsAppNumber(phone);
       if (checked.exists && checked.phone) return checked.phone;
     } catch {
@@ -447,7 +454,8 @@ export class ChatbotEngineService {
         };
       }
 
-      const [coverage, viaCep] = await Promise.all([this.validateCoverage(cep), fetchViaCep(cep)]);
+      const coverage = await this.validateCoverage(cep);
+      const viaCep = coverage?.street && coverage?.city && coverage?.state ? null : await fetchViaCep(cep);
       memory.cep = cep;
       applyAddress(memory, {
         street: coverage?.street ?? viaCep?.street,
@@ -718,6 +726,7 @@ export class ChatbotEngineService {
   }
 
   private async getPlans(agent: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>) {
+    if (Array.isArray(agent?.plans)) return agent.plans;
     if (!agent) return this.chatbotRepository.listActivePlans();
     return this.chatbotRepository.listActivePlans(agent.id);
   }
@@ -2033,4 +2042,24 @@ function applyBatchData(memory: ChatMemory, parts: string[], state: string, plan
     else if (cursor === "ASK_BIRTH_DATE" && memory.birthDate) cursor = "ASK_EMAIL";
     else if (cursor === "ASK_EMAIL" && memory.email) cursor = "ASK_BILLING_DUE_DAY";
   }
+}
+
+/** Fixed-flow inputs must not wait for model classification or a settings lookup. */
+function needsConversationalInterpretation(text: string, state: string, memory: ChatMemory, plans: PlanCandidate[]) {
+  const value = text.trim();
+  if (value.length <= 3 || hasInjection(value)) return false;
+  if (officialAnswer(value) || isRestartRequest(value) || isHandoffRequest(value) || asksForPlanRecommendation(value) || asksForPlanList(value)) return false;
+  if (looksLikeQuestion(value)) return true;
+  if (/^(oi|ola|bom dia|boa tarde|boa noite|tudo bem)[.!\s]*$/.test(normalizeText(value))) return false;
+  if (isExplicitConfirmation(value) || isExplicitRefusal(value)) return false;
+  if (state === "ASK_CEP" && parseCep(value)) return false;
+  if (state === "ASK_STREET_NUMBER" && parseSimpleNumber(value)) return false;
+  if (state === "CHOOSE_PLAN" && selectPlan(value, plans)) return false;
+  if (state === "ASK_NAME" && fullName(value)) return false;
+  if (state === "ASK_DOCUMENT" && (parseDocument(value).valid || /^[\d.\-/\s]+$/.test(value))) return false;
+  if (state === "ASK_BIRTH_DATE" && (parseBirthDate(value) || /^[\d/.\-\s]+$/.test(value))) return false;
+  if (state === "ASK_EMAIL" && (parseEmail(value) || value.includes("@"))) return false;
+  if (state === "ASK_BILLING_DUE_DAY" && parseBillingDay(value)) return false;
+  if (state === "CORRECTION" && (isCorrectionChoiceOnly(value) || (memory.correctionField && validCorrection(memory.correctionField, value, plans)))) return false;
+  return true;
 }
