@@ -1,0 +1,19 @@
+.git
+.env*
+!.env.example
+.next
+node_modules
+.agents
+.aws
+.codex
+data
+*.xlsx
+*.csv
+*.pdf
+*.mp4
+*.txt
+/*.png
+*.log
+CLARO FACEBOOK PARTES
+CLARO FACEBOOK UNICOS PARTES
+CLIK CEPS

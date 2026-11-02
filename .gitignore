@@ -1,0 +1,15 @@
+node_modules
+.next
+.env
+.env.local
+dist
+coverage
+*.log
+*.pdf
+public/*.xls
+public/*.xlsx
+/logohub.png
+.vercel
+.env*
+!.env.example
+.env*
