@@ -221,7 +221,7 @@ function rulesText(rules?: Record<string, unknown>) {
   };
 
   return Object.entries(rules ?? {})
-    .filter(([, value]) => value !== false && value !== null && value !== undefined)
+    .filter(([key, value]) => key !== "coveragePolicy" && value !== false && value !== null && value !== undefined)
     .map(([key, value]) => legacyRules[key] ?? (typeof value === "string" ? value : String(value)))
     .join("\n");
 }

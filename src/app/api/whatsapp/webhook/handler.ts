@@ -153,7 +153,7 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
 }
 
 export function handleEvolutionWebhookHealth() {
-  return NextResponse.json(successResponse("Webhook Evolution ativo.", { ok: true, isolationVersion: 1 }));
+  return NextResponse.json(successResponse("Webhook Evolution ativo.", { ok: true, isolationVersion: 1, coverageVersion: 1 }));
 }
 
 export async function handleWhatsAppWebhookHealth(request: Request) {

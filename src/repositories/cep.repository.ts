@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+import { AGENT_COVERAGE_PREFIX } from "@/modules/chatbot/coverage-policy";
 import { prisma } from "@/lib/prisma";
 
 export type UpsertCoverageCepInput = {
@@ -10,19 +12,24 @@ export type UpsertCoverageCepInput = {
   importedFrom?: string;
 };
 
+export function coverageScopeWhere(dataset?: string): Prisma.CoverageCepWhereInput {
+  return dataset ? { importedFrom: dataset } : { OR: [{ importedFrom: null }, { NOT: { importedFrom: { startsWith: AGENT_COVERAGE_PREFIX } } }] };
+}
+
 export class CepRepository {
-  async overview() {
+  constructor(private readonly db = prisma) {}
+  async overview(dataset?: string) {
     const [total, available, recent, cities] = await Promise.all([
-      prisma.coverageCep.count({ where: { deletedAt: null } }),
-      prisma.coverageCep.count({ where: { deletedAt: null, available: true } }),
-      prisma.coverageCep.findMany({
-        where: { deletedAt: null },
+      this.db.coverageCep.count({ where: { deletedAt: null, ...coverageScopeWhere(dataset) } }),
+      this.db.coverageCep.count({ where: { deletedAt: null, ...coverageScopeWhere(dataset), available: true } }),
+      this.db.coverageCep.findMany({
+        where: { deletedAt: null, ...coverageScopeWhere(dataset) },
         orderBy: { importedAt: "desc" },
         take: 8,
       }),
-      prisma.coverageCep.groupBy({
+      this.db.coverageCep.groupBy({
         by: ["city", "state"],
-        where: { deletedAt: null, city: { not: null } },
+        where: { deletedAt: null, ...coverageScopeWhere(dataset), city: { not: null } },
         _count: { cep: true },
         orderBy: { _count: { cep: "desc" } },
         take: 8,
@@ -44,15 +51,15 @@ export class CepRepository {
 
   async upsertOne(item: UpsertCoverageCepInput) {
     const now = new Date();
-    const existing = await prisma.coverageCep.findFirst({ where: { cep: item.cep, deletedAt: null } });
+    const existing = await this.db.coverageCep.findFirst({ where: { cep: item.cep, deletedAt: null, ...coverageScopeWhere() } });
     if (!existing) {
-      return prisma.coverageCep.create({ data: {
+      return this.db.coverageCep.create({ data: {
         ...item,
         available: item.available ?? true,
         importedAt: now,
       } });
     }
-    return prisma.coverageCep.update({
+    return this.db.coverageCep.update({
       where: { id: existing.id },
       data: {
         city: item.city,
@@ -72,9 +79,9 @@ export class CepRepository {
     let imported = 0;
 
     for (const batch of chunk(items, 250)) {
-      const result = await prisma.$transaction(
+      const result = await this.db.$transaction(
         batch.map((item) =>
-          prisma.coverageCep.create({
+          this.db.coverageCep.create({
             data: {
               ...item,
               available: item.available ?? true,
@@ -97,14 +104,15 @@ export class CepRepository {
     let imported = 0;
     let processed = 0;
 
-    await prisma.coverageCep.deleteMany({
+    await this.db.coverageCep.deleteMany({
       where: {
         importedFrom: { not: "cadastro-manual" },
+        ...coverageScopeWhere(),
       },
     });
 
     for (const batch of chunk(items, 5000)) {
-      const result = await prisma.coverageCep.createMany({
+      const result = await this.db.coverageCep.createMany({
         data: batch.map((item) => ({
           ...item,
           available: item.available ?? true,
@@ -119,18 +127,19 @@ export class CepRepository {
     return imported;
   }
 
-  async findByCep(cep: string) {
-    return prisma.coverageCep.findFirst({
-      where: { cep, available: true, deletedAt: null },
+  async findByCep(cep: string, dataset?: string) {
+    return this.db.coverageCep.findFirst({
+      where: { cep, available: true, deletedAt: null, ...coverageScopeWhere(dataset) },
       orderBy: [{ importedAt: "desc" }, { createdAt: "desc" }],
     });
   }
 
-  async findManyByCeps(ceps: string[]) {
+  async findManyByCeps(ceps: string[], dataset?: string) {
     if (!ceps.length) return [];
-    return prisma.coverageCep.findMany({
+    return this.db.coverageCep.findMany({
       where: {
         cep: { in: ceps },
+        ...coverageScopeWhere(dataset),
         available: true,
         deletedAt: null,
       },

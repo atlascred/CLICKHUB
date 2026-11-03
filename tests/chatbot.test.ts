@@ -613,3 +613,34 @@ test('101 — persistência sem readback mantém escrita e dispensa somente leit
   const blocked=new ChatbotRepository({$executeRaw:async()=>0} as any);
   await assert.rejects(blocked.updateConversation({id:'test',state:'ASK_EMAIL',memory:{}},false),/assumida ou bloqueada/);
 });
+
+function scopedCoverageSimulator(state='ASK_CEP', memory:object={}) {
+  const scopedPlans=plans.map((plan,i)=>({...plan,id:`giga-coverage-${i}`,price:[99.99,109.99,139.99][i],description:'Globoplay grátis'}));
+  const agent={id:'coverage-giga',name:'Lily',zapiInstanceId:'GIGA CLICK',plans:scopedPlans,personality:'Consultora virtual',rules:{coveragePolicy:{mode:'required',dataset:'agent-coverage:coverage-giga:test'}},enableReplyDelay:false,enableTyping:false};
+  const s=simulator('cobertura por instância',{state,memory});
+  s.repo.getAgentByInstance=async()=>agent as any;
+  (s.engine as any).cepRepository={findByCep:async(cep:string,dataset?:string)=>{assert.equal(dataset,'agent-coverage:coverage-giga:test');return cep==='01139000'?{cep,available:true,street:'Rua de Teste',city:'São Paulo',state:'SP',neighborhood:'Centro'}:null;}};
+  return {...s,scopedPlans,agent};
+}
+test('102 — GIGA segue no mesmo fluxo quando CEP com zero inicial está na sua base',async()=>{
+ const s=scopedCoverageSimulator();await s.say('01139-000');assert.equal(s.conversation.state,'ASK_STREET_NUMBER');await s.say('123');assert.equal(s.conversation.state,'ASK_COMPLEMENT');await s.say('não');assert.equal(s.conversation.state,'CHOOSE_PLAN');assert.ok(s.sends.at(-1)!.includes('99,99'));assert.ok(!/claro|vivo|cris/i.test(s.sends.join('\n')));
+});
+test('103 — GIGA recusa CEP ausente sem consultar ViaCEP, listar planos ou criar lead',async()=>{
+ const s=scopedCoverageSimulator();let externalCalls=0;const previous=global.fetch;global.fetch=async()=>{externalCalls++;throw new Error('No external lookup for missing coverage');};
+ try{await s.say('01001000');}finally{global.fetch=previous;}
+ assert.equal(s.conversation.state,'FINISHED_UNAVAILABLE');assert.equal(s.leads.length,0);assert.equal(externalCalls,0);assert.match(s.sends[0],/no momento ainda não temos cobertura/);assert.ok(!/claro|vivo|cris|R\$/i.test(s.sends[0]));
+});
+test('104 — CLICK mantém aceitação anterior para CEP fora da nova base',async()=>{
+ const s=simulator('CLICK inalterado',{state:'ASK_CEP'});let scope:unknown='not-called';(s.engine as any).cepRepository={findByCep:async(_cep:string,dataset?:string)=>{scope=dataset;return null;}};await s.say('01001000');assert.equal(scope,undefined);assert.equal(s.conversation.state,'ASK_STREET_NUMBER');
+});
+test('105 — CEP fornecido na abertura ou em lote não contorna a cobertura',async()=>{
+ for(const [cep,expected]of [['01139000','ASK_STREET_NUMBER'],['01001000','FINISHED_UNAVAILABLE']]){const s=scopedCoverageSimulator('START');await s.say(`CEP ${cep}`);assert.equal(s.conversation.state,expected);}
+ const s=scopedCoverageSimulator('START');const batch=[{providerId:'c1',body:'oi'},{providerId:'c2',body:'01001000'},{providerId:'c3',body:'123'}];await s.say(batch.map(m=>m.body).join('\n'),'c1',{batchMessages:batch});assert.equal(s.conversation.state,'FINISHED_UNAVAILABLE');assert.equal(s.leads.length,0);
+});
+test('106 — correção de endereço e confirmação antiga revalidam cobertura antes de cadastrar',async()=>{
+ const correction=scopedCoverageSimulator('CORRECTION',{correctionField:'address',cep:'01139000'});await correction.say('01001000');assert.equal(correction.conversation.state,'FINISHED_UNAVAILABLE');assert.equal(correction.leads.length,0);
+ const old=scopedCoverageSimulator('CONFIRM_DATA',{cep:'01001000'});await old.say('sim');assert.equal(old.conversation.state,'FINISHED_UNAVAILABLE');assert.equal(old.leads.length,0);
+});
+test('107 — falha na consulta não é tratada como ausência de cobertura',async()=>{
+ const s=scopedCoverageSimulator();(s.engine as any).cepRepository={findByCep:async()=>{throw new Error('Coverage database unavailable');}};await assert.rejects(s.say('01139000'),/Coverage database unavailable/);assert.equal(s.sends.length,0);assert.equal(s.leads.length,0);assert.equal(s.conversation.state,'ASK_CEP');
+});

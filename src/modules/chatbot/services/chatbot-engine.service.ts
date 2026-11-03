@@ -1,3 +1,4 @@
+import { coverageDataset, coverageUnavailable } from "@/modules/chatbot/coverage-policy";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { CepRepository } from "@/repositories/cep.repository";
@@ -22,13 +23,14 @@ export class ChatbotEngineService {
     private readonly delivery?: { send: (input: { phone: string; message: string }) => Promise<void> },
   ) {}
 
-  async validateCoverage(cep: string) {
-    const coverage = await this.cepRepository.findByCep(cep);
+  async validateCoverage(cep: string, agent?: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>) {
+    const dataset = coverageDataset(agent);
+    const coverage = await this.cepRepository.findByCep(cep, dataset);
     if (coverage) return coverage;
 
     return {
       cep,
-      available: true,
+      available: !dataset,
       street: null,
       neighborhood: null,
       city: null,
@@ -325,6 +327,7 @@ export class ChatbotEngineService {
     if (earlyCep) memory.cep = onlyDigits(earlyCep);
     const plans = await this.getPlans(input.agent);
     if ((input.parts?.length ?? 0) > 1) applyBatchData(memory, input.parts!, input.state, plans);
+    if (!["START", "ASK_CEP", "CORRECTION"].includes(input.state) && memory.cep && memory.cep !== input.memory.cep && coverageDataset(input.agent) && !(await this.validateCoverage(memory.cep, input.agent)).available) return coverageUnavailable(memory, memory.cep);
     const mentionedPlan = selectPlan(evidence.plan || text, plans);
     const explicitPlan = (Boolean(evidence.plan) || /(?:trocar|mudar|alterar|prefiro|quero|plano|ficar com|opcao)/i.test(normalizeText(text)))
       && /\b(600|800|1000|1\s*giga|seiscentos|oitocentos)\b/i.test(normalizeText(text))
@@ -431,7 +434,8 @@ export class ChatbotEngineService {
     }
 
     if (input.state === "START" && memory.cep) {
-      const coverage = await this.validateCoverage(memory.cep);
+      const coverage = await this.validateCoverage(memory.cep, input.agent);
+      if (coverage.available === false) return coverageUnavailable(memory, memory.cep);
       applyAddress(memory, { street: coverage?.street ?? undefined, city: coverage?.city ?? undefined, state: coverage?.state ?? undefined, neighborhood: coverage?.neighborhood ?? undefined });
       const next = afterKnownAddress(memory, plans);
       return { ...next, reply: `Olá! Sou a ${input.agent?.name ?? "Lily"}. Já anotei as informações que você enviou.\n\n${next.reply}` };
@@ -454,7 +458,8 @@ export class ChatbotEngineService {
         };
       }
 
-      const coverage = await this.validateCoverage(cep);
+      const coverage = await this.validateCoverage(cep, input.agent);
+      if (coverage.available === false) return coverageUnavailable(memory, cep);
       const viaCep = coverage?.street && coverage?.city && coverage?.state ? null : await fetchViaCep(cep);
       memory.cep = cep;
       applyAddress(memory, {
@@ -630,6 +635,7 @@ export class ChatbotEngineService {
     if (input.state === "CONFIRM_DATA") {
       if (isPositive(text)) {
         if (!memory.cep || !/^\d{8}$/.test(memory.cep)) return { state: "ASK_CEP", memory, reply: promptForState("ASK_CEP") };
+        if (coverageDataset(input.agent) && !(await this.validateCoverage(memory.cep, input.agent)).available) return coverageUnavailable(memory, memory.cep);
         if (!memory.streetNumber || !parseSimpleNumber(memory.streetNumber)) return { state: "ASK_STREET_NUMBER", memory, reply: promptForState("ASK_STREET_NUMBER") };
         if (!memory.complement) return { state: "ASK_COMPLEMENT", memory, reply: promptForState("ASK_COMPLEMENT") };
         const incomplete = nextCustomerDataResponse(memory);
@@ -701,6 +707,7 @@ export class ChatbotEngineService {
       }
       if (!validCorrection(correctionField, text, plans)) return { state: "CORRECTION", memory: { ...memory, correctionField }, reply: `Não consegui validar a correção. ${correctionPrompt(correctionField)}` };
       const corrected = await this.applyCorrection(text, { ...memory, correctionField }, input.agent);
+      if (corrected.cep && coverageDataset(input.agent) && !(await this.validateCoverage(corrected.cep, input.agent)).available) return coverageUnavailable(corrected, corrected.cep);
       corrected.correctionField = undefined;
       return {
         state: "CONFIRM_DATA",
@@ -813,7 +820,9 @@ export class ChatbotEngineService {
       corrected.documentType = document.type;
     } else if (corrected.correctionField === "address" && cep) {
       corrected.cep = cep;
-      const [coverage, viaCep] = await Promise.all([this.validateCoverage(cep), fetchViaCep(cep)]);
+      const coverage = await this.validateCoverage(cep, agent);
+      if (coverage.available === false) return corrected;
+      const viaCep = coverage.street && coverage.city && coverage.state ? null : await fetchViaCep(cep);
       applyAddress(corrected, {
         street: coverage?.street ?? viaCep?.street,
         neighborhood: coverage?.neighborhood ?? viaCep?.neighborhood,
@@ -841,7 +850,9 @@ export class ChatbotEngineService {
       corrected.documentType = document.type;
     } else if (cep) {
       corrected.cep = cep;
-      const [coverage, viaCep] = await Promise.all([this.validateCoverage(cep), fetchViaCep(cep)]);
+      const coverage = await this.validateCoverage(cep, agent);
+      if (coverage.available === false) return corrected;
+      const viaCep = coverage.street && coverage.city && coverage.state ? null : await fetchViaCep(cep);
       applyAddress(corrected, {
         street: coverage?.street ?? viaCep?.street,
         neighborhood: coverage?.neighborhood ?? viaCep?.neighborhood,
@@ -1975,7 +1986,7 @@ function flowMessage(flow: unknown, state: string, fallback: string) {
 
 function formatAgentRules(rules: unknown) {
   if (!rules || typeof rules !== "object" || Array.isArray(rules)) return "Nenhuma regra adicional configurada.";
-  return Object.values(rules)
+  return Object.entries(rules).filter(([key]) => key !== "coveragePolicy").map(([, value]) => value)
     .filter((value) => value !== false && value !== null && value !== undefined)
     .map((value) => `- ${String(value)}`)
     .join("\n") || "Nenhuma regra adicional configurada.";

@@ -27,6 +27,7 @@ async function main() {
     await prisma.coverageCep.deleteMany({
       where: {
         importedFrom: { not: "cadastro-manual" },
+        NOT: { importedFrom: { startsWith: "agent-coverage:" } },
       },
     });
   }
@@ -40,7 +41,7 @@ async function main() {
     console.log(`Importando cobertura Claro: ${imported.toLocaleString("pt-BR")}/${ceps.length.toLocaleString("pt-BR")}`);
   }
 
-  const totalInDb = await prisma.coverageCep.count({ where: { deletedAt: null } });
+  const totalInDb = await prisma.coverageCep.count({ where: { deletedAt: null, OR: [{ importedFrom: null }, { NOT: { importedFrom: { startsWith: "agent-coverage:" } } }] } });
   console.log(JSON.stringify({
     totalRows: rows.length,
     validRows: ceps.length,

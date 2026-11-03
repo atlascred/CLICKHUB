@@ -23,6 +23,8 @@ type CepItem = {
 } | null;
 
 type CepOverview = {
+  restricted?: boolean;
+  selectedAgentId?: string | null;
   total: number;
   available: number;
   unavailable: number;
@@ -31,9 +33,12 @@ type CepOverview = {
 };
 
 export function CepPanel() {
-  const overview = useApiResource<CepOverview>("/api/ceps");
+  const [agentId, setAgentId] = useState("");
+  const agents = useApiResource<Array<{id:string;instanceName:string}>>("/api/whatsapp/agents");
+  const overview = useApiResource<CepOverview>(agentId ? `/api/ceps?agentId=${agentId}` : "/api/ceps");
   const currentUser = useCurrentUser();
   const isAdmin = currentUser.data?.role === "ADMIN";
+  const canEditBase = isAdmin && (!agentId || overview.data?.selectedAgentId === agentId && overview.data.restricted === false);
   const [result, setResult] = useState<CepItem>(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -42,7 +47,7 @@ export function CepPanel() {
     event.preventDefault();
     setLoading(true);
     const formData = new FormData(event.currentTarget);
-    const response = await fetch(`/api/ceps?cep=${formData.get("cep")}`);
+    const response = await fetch(`/api/ceps?cep=${formData.get("cep")}${agentId ? `&agentId=${agentId}` : ""}`);
     const data = (await response.json()) as ApiResult<CepItem>;
     if (data.status === "success") {
       setResult(data.data);
@@ -106,6 +111,8 @@ export function CepPanel() {
 
   return (
     <div className="space-y-4">
+      <label className="flex flex-wrap items-center gap-3 text-sm font-medium">Base de cobertura<select aria-label="Base de cobertura do agente" className="h-10 rounded-md border bg-background px-3" value={agentId} onChange={event=>{setAgentId(event.target.value);setResult(null);setMessage("");}}><option value="">Base geral / CLICK</option>{(agents.data ?? []).map(agent=><option key={agent.id} value={agent.id}>{agent.instanceName}</option>)}</select></label>
+      {overview.data?.restricted ? <p className="text-sm text-muted-foreground">Esta base é própria do agente selecionado e foi carregada pelas planilhas de cobertura.</p> : null}
       {isAdmin ? <div className="grid gap-3 sm:grid-cols-3">
         <Metric label="CEPs cadastrados" value={String(overview.data?.total ?? 0)} />
         <Metric label="Com cobertura" value={String(overview.data?.available ?? 0)} />
@@ -130,7 +137,7 @@ export function CepPanel() {
           </CardContent>
         </Card>
 
-        {isAdmin ? <Card>
+        {canEditBase ? <Card>
           <CardHeader>
             <CardTitle>Cadastrar Cobertura</CardTitle>
             <CardDescription>Inclusao ou atualizacao pontual de CEP</CardDescription>
@@ -158,7 +165,7 @@ export function CepPanel() {
       </div>
 
       {isAdmin ? <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <Card>
+        {canEditBase ? <Card>
           <CardHeader>
             <CardTitle>Importar Base</CardTitle>
             <CardDescription>Arquivos XLSX ou CSV</CardDescription>
@@ -172,7 +179,7 @@ export function CepPanel() {
               </Button>
             </form>
           </CardContent>
-        </Card>
+        </Card> : null}
 
         <Card>
           <CardHeader>

@@ -1,3 +1,6 @@
+import { prisma } from "@/lib/prisma";
+import { coverageDataset } from "@/modules/chatbot/coverage-policy";
+import { resolveLeadAgentScope } from "@/lib/lead-source-access";
 import { NextResponse } from "next/server";
 import { authErrorResponse } from "@/lib/api-errors";
 import { errorResponse, successResponse } from "@/lib/api-response";
@@ -18,6 +21,16 @@ export async function GET(request: Request) {
     assertPermission(user, permissions.cepsView);
 
     const url = new URL(request.url);
+    const agentId = url.searchParams.get("agentId")?.trim();
+    let dataset: string | undefined;
+    if (agentId) {
+      if (!/^[a-f0-9-]{36}$/i.test(agentId)) return NextResponse.json(errorResponse("Agente inválido.", "INVALID_AGENT"), { status: 422 });
+      const agent = await prisma.agent.findFirst({ where: { id: agentId, deletedAt: null, active: true }, select: { id: true, rules: true, zapiInstanceId: true } });
+      if (!agent) return NextResponse.json(errorResponse("Agente não encontrado.", "NOT_FOUND"), { status: 404 });
+      const allowed = resolveLeadAgentScope(user);
+      if (allowed !== "both" && agent.zapiInstanceId !== (allowed === "click" ? "CLICK" : "GIGA CLICK")) throw new Error("FORBIDDEN");
+      dataset = coverageDataset(agent);
+    }
     const cep = onlyDigits(url.searchParams.get("cep") ?? "");
     const cepsRaw = url.searchParams.get("ceps") ?? "";
     const ceps = cepsRaw
@@ -35,7 +48,7 @@ export async function GET(request: Request) {
         return NextResponse.json(errorResponse("Consulte no maximo 1000 CEPs por vez.", "BATCH_LIMIT"), { status: 422 });
       }
 
-      const foundRows = await cepRepository.findManyByCeps(validCeps);
+      const foundRows = await cepRepository.findManyByCeps(validCeps, dataset);
       const foundByCep = new Map<string, typeof foundRows[number]>();
       for (const item of foundRows) {
         if (!foundByCep.has(item.cep)) foundByCep.set(item.cep, item);
@@ -57,8 +70,8 @@ export async function GET(request: Request) {
     }
 
     if (!cep) {
-      const overview = await cepRepository.overview();
-      return NextResponse.json(successResponse("Resumo de CEPs consultado.", overview));
+      const overview = await cepRepository.overview(dataset);
+      return NextResponse.json(successResponse("Resumo de CEPs consultado.", { ...overview, restricted: Boolean(dataset), selectedAgentId: agentId || null }));
     }
 
     if (cep.length !== 8) {
@@ -67,7 +80,7 @@ export async function GET(request: Request) {
       });
     }
 
-    const coverage = await cepRepository.findByCep(cep);
+    const coverage = await cepRepository.findByCep(cep, dataset);
     if (coverage) {
       return NextResponse.json(successResponse("CEP consultado.", { ...coverage, source: "base" }));
     }
