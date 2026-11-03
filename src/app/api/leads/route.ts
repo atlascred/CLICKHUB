@@ -10,11 +10,12 @@ import { LeadService } from "@/modules/leads/services/lead.service";
 
 const leadService = new LeadService();
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await requireCurrentUser();
     assertPermission(user, permissions.leadsView);
-    const leads = await leadService.list(user);
+    const agentScope = new URL(request.url).searchParams.get("agent");
+    const leads = await leadService.list(user, agentScope ?? undefined);
     return NextResponse.json(successResponse("Leads consultados.", leads));
   } catch (error) {
     const authError = authErrorResponse(error);

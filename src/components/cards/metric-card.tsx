@@ -1,49 +1,40 @@
+import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
+import { ArrowUpRight } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 
 type MetricCardProps = {
   title: string;
   value: string;
-  trend: string;
-  color: "blue" | "green" | "purple" | "orange";
+  helper: string;
+  icon: LucideIcon;
   href?: string;
+  tone?: "blue" | "teal" | "indigo" | "amber";
 };
 
-const cardColors = {
-  blue: { stroke: "#1684ff", fill: "rgba(22,132,255,0.22)" },
-  green: { stroke: "#30d83f", fill: "rgba(48,216,63,0.18)" },
-  purple: { stroke: "#8738ff", fill: "rgba(135,56,255,0.22)" },
-  orange: { stroke: "#ff8a00", fill: "rgba(255,138,0,0.22)" },
+const tones = {
+  blue: { surface: "from-blue-500/10", ink: "text-blue-700 dark:text-blue-300", icon: "bg-blue-600", line: "bg-blue-500" },
+  teal: { surface: "from-teal-500/10", ink: "text-teal-700 dark:text-teal-300", icon: "bg-teal-600", line: "bg-teal-500" },
+  indigo: { surface: "from-indigo-500/10", ink: "text-indigo-700 dark:text-indigo-300", icon: "bg-indigo-600", line: "bg-indigo-500" },
+  amber: { surface: "from-amber-500/10", ink: "text-amber-800 dark:text-amber-300", icon: "bg-amber-600", line: "bg-amber-500" },
 };
 
-export function MetricCard({ title, value, trend, color, href }: MetricCardProps) {
-  const chart = cardColors[color];
-  const gradientId = `metric-${color}-${title.replace(/\W+/g, "-").toLowerCase()}`;
+export function MetricCard({ title, value, helper, icon: Icon, href, tone = "blue" }: MetricCardProps) {
+  const color = tones[tone];
   const card = (
-    <div className="relative h-[200px] overflow-hidden rounded-[12px] border border-[#0c3569] bg-[linear-gradient(180deg,rgba(3,26,59,0.98),rgba(2,23,52,0.98))] shadow-[0_20px_50px_rgba(0,11,30,0.28)] transition-transform hover:-translate-y-0.5">
-      <div className="relative z-10 flex h-full items-start justify-between px-[18px] py-[20px]">
-        <div>
-          <p className="text-[14px] font-medium text-[#aeb9cf]">{title}</p>
-          <p className="mt-[22px] text-[30px] font-semibold leading-none tracking-[-0.035em] text-white">{value}</p>
-          <p className="mt-[12px] text-[12px]">
-            <span className="font-semibold text-[#39ff45]">↑ {trend}</span>
-            <span className="ml-2 text-[#93a4c5]">vs mês anterior</span>
-          </p>
+    <Card className={`group relative h-full overflow-hidden bg-gradient-to-br ${color.surface} to-transparent transition-colors hover:border-primary/25`}>
+      <div className={`absolute inset-x-0 top-0 h-0.5 ${color.line}`} />
+      <CardContent className="p-5">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <p className={`text-xs font-bold ${color.ink}`}>{title}</p>
+          <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white shadow-sm ${color.icon}`}><Icon className="h-4 w-4" aria-hidden="true" /></div>
         </div>
-        <div className="mt-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-[#7d93bc] text-[12px] font-medium text-[#9fb0ce]">
-          i
+        <div className="min-w-0">
+          <p className="break-words text-[clamp(1.5rem,2.1vw,2rem)] font-extrabold tracking-tight tabular-nums">{value}</p>
+          <div className="mt-4 flex items-center justify-between border-t border-foreground/5 pt-3"><p className="text-[11px] text-muted-foreground">{helper}</p>{href ? <ArrowUpRight className={`h-3.5 w-3.5 ${color.ink}`} /> : null}</div>
         </div>
-      </div>
-      <svg className="absolute bottom-[20px] left-[18px] h-[86px] w-[calc(100%-36px)]" viewBox="0 0 280 86" preserveAspectRatio="none" aria-hidden="true">
-        <defs>
-          <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-            <stop stopColor={chart.fill} />
-            <stop offset="1" stopColor="rgba(3,24,54,0)" />
-          </linearGradient>
-        </defs>
-        <path d="M0 73 C18 65 22 62 37 63 C52 64 57 49 72 51 C88 53 93 42 108 43 C124 44 127 55 143 53 C160 51 164 38 179 39 C195 40 199 30 214 29 C230 28 234 39 249 35 C264 31 264 20 280 18 L280 86 L0 86 Z" fill={`url(#${gradientId})`} />
-        <path d="M0 73 C18 65 22 62 37 63 C52 64 57 49 72 51 C88 53 93 42 108 43 C124 44 127 55 143 53 C160 51 164 38 179 39 C195 40 199 30 214 29 C230 28 234 39 249 35 C264 31 264 20 280 18" fill="none" stroke={chart.stroke} strokeLinecap="round" strokeWidth="2" />
-      </svg>
-    </div>
+      </CardContent>
+    </Card>
   );
 
   if (href) {

@@ -1,13 +1,15 @@
 "use client";
+import { leadSourceLabel } from "@/modules/leads/types/lead-source";
 
-import { FormEvent, useMemo, useState } from "react";
-import { CalendarClock, Check, Clipboard, Download, Eye, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { CalendarClock, Check, Download, Eye, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useApiResource } from "@/hooks/use-api-resource";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import type { ApiResult } from "@/types/api";
 
 const statusOptions = [
@@ -103,15 +105,20 @@ type LeadDetail = LeadListItem & {
 };
 
 type ViewMode = "kanban" | "table";
+type AgentScope = "both" | "click" | "giga";
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
 });
 
+const LEADS_PER_PAGE = 25;
+
 export function LeadBoard() {
   const searchParams = useSearchParams();
-  const { data, loading, error, refresh } = useApiResource<LeadListItem[]>("/api/leads");
+  const { data: currentUser } = useCurrentUser();
+  const [agentScope, setAgentScope] = useState<AgentScope>("both");
+  const { data, loading, error, refresh } = useApiResource<LeadListItem[]>(`/api/leads?agent=${agentScope}`);
   const users = useApiResource<UserOption[]>("/api/users");
   const plans = useApiResource<PlanOption[]>("/api/plans");
   const stages = useApiResource<LeadStage[]>("/api/lead-stages");
@@ -123,6 +130,7 @@ export function LeadBoard() {
   const [newStageName, setNewStageName] = useState("");
   const [detail, setDetail] = useState<LeadDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [page, setPage] = useState(1);
 
   const activePlans = useMemo(() => (plans.data ?? []).filter((plan) => plan.active), [plans.data]);
   const kanbanStages = useMemo(() => {
@@ -147,6 +155,7 @@ export function LeadBoard() {
       (!createdFilter || createdFilter !== "today" || lead.createdAt?.slice(0, 10) === today) &&
       [
         lead.name,
+        leadSourceLabel(lead.source),
         lead.phone,
         lead.email,
         lead.cpfCnpj,
@@ -167,6 +176,22 @@ export function LeadBoard() {
     () => filtered.reduce((sum, lead) => sum + Number(lead.expectedValue ?? 0), 0),
     [filtered],
   );
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / LEADS_PER_PAGE));
+  const paginatedLeads = useMemo(() => {
+    const start = (page - 1) * LEADS_PER_PAGE;
+    return filtered.slice(start, start + LEADS_PER_PAGE);
+  }, [filtered, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [agentScope, query, statusFilter, searchParams, viewMode]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -315,6 +340,13 @@ export function LeadBoard() {
               </option>
             ))}
           </select>
+          {currentUser?.role === "ADMIN" && !currentUser.permissions["leads.onlyGiga"] && !currentUser.permissions["leads.onlyClick"] ? (
+            <select aria-label="Chatbot exibido" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={agentScope} onChange={(event) => setAgentScope(event.target.value as AgentScope)}>
+              <option value="both">CLICK e GIGA CLICK</option>
+              <option value="click">CLICK</option>
+              <option value="giga">GIGA CLICK</option>
+            </select>
+          ) : null}
           <div className="flex rounded-md border bg-background p-1">
             <Button
               aria-label="Visualizar kanban"
@@ -340,7 +372,7 @@ export function LeadBoard() {
             Atualizar
           </Button>
           <Button asChild variant="outline" type="button">
-            <a href="/api/leads/export">
+            <a href={`/api/leads/export?agent=${agentScope}`}>
               <Download className="h-4 w-4" aria-hidden="true" />
               Exportar XLSX
             </a>
@@ -375,16 +407,25 @@ export function LeadBoard() {
             onOpenDetails={openLeadDetails}
           />
         ) : (
-          <TableView
-            leads={filtered}
-            loading={loading}
-            users={users.data ?? []}
-            plans={activePlans}
-            stages={kanbanStages}
-            onUpdate={updateLead}
-            onDelete={deleteLead}
-            onOpenDetails={openLeadDetails}
-          />
+          <div className="space-y-3">
+            <TableView
+              leads={paginatedLeads}
+              loading={loading}
+              users={users.data ?? []}
+              plans={activePlans}
+              stages={kanbanStages}
+              onUpdate={updateLead}
+              onDelete={deleteLead}
+              onOpenDetails={openLeadDetails}
+            />
+            <PaginationControls
+              page={page}
+              totalPages={totalPages}
+              totalItems={filtered.length}
+              itemsPerPage={LEADS_PER_PAGE}
+              onPageChange={setPage}
+            />
+          </div>
         )}
       </div>
       <LeadCreateModal
@@ -601,6 +642,7 @@ function TableView({
                 <tr key={lead.id}>
                   <td className="px-3 py-3">
                     <p className="font-medium">{lead.name}</p>
+                    <span className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-200">{leadSourceLabel(lead.source)}</span>
                   </td>
                   <td className="px-3 py-3 text-xs text-muted-foreground">{lead.phone}</td>
                   <td className="px-3 py-3 text-xs text-muted-foreground">
@@ -670,6 +712,52 @@ function TableView({
   );
 }
 
+function PaginationControls({
+  page,
+  totalPages,
+  totalItems,
+  itemsPerPage,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  itemsPerPage: number;
+  onPageChange: (page: number) => void;
+}) {
+  const start = totalItems === 0 ? 0 : (page - 1) * itemsPerPage + 1;
+  const end = Math.min(page * itemsPerPage, totalItems);
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border bg-background p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-muted-foreground">
+        Mostrando {start}-{end} de {totalItems} leads
+      </p>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          Anterior
+        </Button>
+        <span className="min-w-24 text-center text-muted-foreground">
+          Pagina {page} de {totalPages}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Proxima
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function LeadCard({
   lead,
   users,
@@ -699,6 +787,7 @@ function LeadCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate font-medium">{lead.name}</p>
+          <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-200">{leadSourceLabel(lead.source)}</span>
           <p className="text-muted-foreground">{lead.phone}</p>
         </div>
         <div className="flex shrink-0 gap-1">
@@ -765,7 +854,7 @@ function LeadCreateModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40">
+    <div className="fixed inset-0 z-50 !m-0 bg-black/40">
       <div className="ml-auto flex h-full w-full max-w-2xl flex-col border-l bg-background shadow-xl">
         <div className="flex items-start justify-between gap-4 border-b p-5">
           <div>
@@ -923,37 +1012,18 @@ function LeadDetailPanel({
   onClose: () => void;
   onSave: (id: string, payload: Partial<LeadListItem>) => Promise<void>;
 }) {
-  const [copiedConsultation, setCopiedConsultation] = useState(false);
-  const [copiedAnalysis, setCopiedAnalysis] = useState(false);
-
   if (!lead && !loading) {
     return null;
   }
 
-  async function copyConsultationAddress() {
-    if (!lead) return;
-    const value = buildConsultationAddress(lead);
-    if (!value) return;
-    await navigator.clipboard.writeText(value);
-    setCopiedConsultation(true);
-    window.setTimeout(() => setCopiedConsultation(false), 1800);
-  }
-
-  async function copyAnalysis() {
-    if (!lead) return;
-    const value = buildLeadAnalysisCopy(lead);
-    await navigator.clipboard.writeText(value);
-    setCopiedAnalysis(true);
-    window.setTimeout(() => setCopiedAnalysis(false), 1800);
-  }
-
   return (
-    <div className="fixed inset-0 z-50 bg-black/40">
+    <div className="fixed inset-0 z-50 !m-0 bg-black/40">
       <div className="ml-auto flex h-full w-full max-w-2xl flex-col border-l bg-background shadow-xl">
         <div className="flex items-start justify-between gap-4 border-b p-5">
           <div className="min-w-0">
             <p className="text-xs uppercase text-muted-foreground">Detalhes do lead</p>
             <h2 className="truncate text-xl font-semibold">{lead?.name ?? "Carregando"}</h2>
+            {lead && <p className="text-sm font-medium text-primary">Origem: {leadSourceLabel(lead.source)}</p>}
             <p className="text-sm text-muted-foreground">{lead?.phone ?? "Buscando informacoes"}</p>
           </div>
           <Button aria-label="Fechar detalhes" size="sm" variant="ghost" type="button" onClick={onClose}>
@@ -967,38 +1037,6 @@ function LeadDetailPanel({
           ) : lead ? (
             <>
               <LeadEditForm lead={lead} users={users} plans={plans} stages={stages} onSave={onSave} />
-
-              <section className="rounded-md border p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide">Copiar para consulta</h3>
-                  <Button size="sm" variant="outline" type="button" onClick={() => void copyConsultationAddress()} disabled={!buildConsultationAddress(lead)}>
-                    <Clipboard className="h-4 w-4" aria-hidden="true" />
-                    {copiedConsultation ? "Copiado" : "Copiar"}
-                  </Button>
-                </div>
-                <Textarea
-                  className="mt-3 min-h-28 resize-none text-sm"
-                  value={buildConsultationAddress(lead)}
-                  readOnly
-                  placeholder="Endereço completo com CEP aparecerá aqui quando estiver preenchido."
-                />
-              </section>
-
-              <section className="rounded-md border p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide">Copiar para análise</h3>
-                  <Button size="sm" variant="outline" type="button" onClick={() => void copyAnalysis()}>
-                    <Clipboard className="h-4 w-4" aria-hidden="true" />
-                    {copiedAnalysis ? "Copiado" : "Copiar"}
-                  </Button>
-                </div>
-                <Textarea
-                  className="mt-3 min-h-56 resize-none whitespace-pre-wrap font-mono text-sm"
-                  value={buildLeadAnalysisCopy(lead)}
-                  readOnly
-                  placeholder="Resumo formatado do lead aparecerá aqui."
-                />
-              </section>
 
               <section className="rounded-md border p-4">
                 <h3 className="flex items-center gap-2 text-sm font-semibold">
@@ -1029,7 +1067,7 @@ function LeadDetailPanel({
               <section className="rounded-md border p-4">
                 <h3 className="flex items-center gap-2 text-sm font-semibold">
                   <MessageSquareText className="h-4 w-4" aria-hidden="true" />
-                  Conversas da Lily
+                  Conversas do atendimento
                 </h3>
                 <div className="mt-3 space-y-3">
                   {lead.conversations.length ? (
@@ -1043,7 +1081,7 @@ function LeadDetailPanel({
                           {conversation.messages.map((message) => (
                             <div key={message.id} className="rounded-md bg-muted p-2 text-sm">
                               <p className="text-xs uppercase text-muted-foreground">
-                                {message.direction === "inbound" ? "Cliente" : "Lily"} -{" "}
+                                {message.direction === "inbound" ? "Cliente" : leadSourceLabel(lead.source)} -{" "}
                                 {formatDateTime(message.createdAt)}
                               </p>
                               <p className="mt-1 whitespace-pre-wrap">{message.body}</p>
@@ -1072,89 +1110,6 @@ function Info({ label, value }: { label: string; value: string }) {
       <p className="font-medium">{value}</p>
     </div>
   );
-}
-
-function buildConsultationAddress(lead: Partial<LeadListItem>) {
-  const streetLine = [
-    normalizeText(lead.address),
-    lead.streetNumber ? `nº ${normalizeText(lead.streetNumber)}` : "",
-    normalizeText(lead.complement),
-  ].filter(Boolean).join(", ");
-  const locationLine = [
-    normalizeText(lead.neighborhood),
-    normalizeText(lead.city),
-    normalizeText(lead.state),
-  ].filter(Boolean).join(" - ");
-  const cepLine = normalizeCep(lead.cep);
-  return [
-    streetLine,
-    locationLine,
-    cepLine ? `CEP: ${cepLine}` : "",
-  ].filter(Boolean).join("\n");
-}
-
-function buildLeadAnalysisCopy(lead: Partial<LeadListItem>) {
-  return [
-    `🛜 PLANO: ${formatPlanForCopy(lead)}`,
-    `👤 Nome: ${normalizeText(lead.name) || "Não informado"}`,
-    `📲 WhatsApp: ${formatPhoneForCopy(lead.phone)}`,
-    `🆔 CPF: ${formatCpfForCopy(lead.cpfCnpj)}`,
-    `🎂 Nascimento: ${formatBirthDateForCopy(lead.birthDate)}`,
-    `📧 E-mail: ${normalizeText(lead.email) || "Não informado"}`,
-    `📍 CEP: ${normalizeCep(lead.cep) || "Não informado"}`,
-    `🏠 Endereço: ${formatAddressForCopy(lead)}`,
-    `📅 Vencimento: ${lead.billingDueDay ? `Dia ${lead.billingDueDay}` : "Não informado"}`,
-  ].join("\n");
-}
-
-function formatPlanForCopy(lead: Partial<LeadListItem>) {
-  return normalizeText(lead.planName) || normalizeText(lead.plan?.name) || "Não informado";
-}
-
-function formatPhoneForCopy(value?: string | null) {
-  const digits = String(value ?? "").replace(/\D/g, "");
-  if (!digits) return "Não informado";
-  if (digits.startsWith("55")) return digits;
-  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
-  return digits;
-}
-
-function formatCpfForCopy(value?: string | null) {
-  const digits = String(value ?? "").replace(/\D/g, "");
-  if (digits.length !== 11) return normalizeText(value) || "Não informado";
-  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
-}
-
-function formatBirthDateForCopy(value?: string | null) {
-  if (!value) return "Não informado";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return normalizeText(value) || "Não informado";
-  return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(date);
-}
-
-function formatAddressForCopy(lead: Partial<LeadListItem>) {
-  const streetLine = [
-    normalizeText(lead.address),
-    lead.streetNumber ? `nº ${normalizeText(lead.streetNumber)}` : "",
-    normalizeText(lead.complement),
-    normalizeText(lead.neighborhood),
-  ].filter(Boolean).join(", ");
-  const cityState = [
-    normalizeText(lead.city).toUpperCase(),
-    normalizeText(lead.state).toUpperCase(),
-  ].filter(Boolean).join("/");
-  if (streetLine && cityState) return `${streetLine} – ${cityState}`;
-  return streetLine || cityState || "Não informado";
-}
-
-function normalizeText(value?: string | null) {
-  return String(value ?? "").trim();
-}
-
-function normalizeCep(value?: string | null) {
-  const digits = String(value ?? "").replace(/\D/g, "");
-  if (digits.length !== 8) return normalizeText(value);
-  return `${digits.slice(0, 5)}-${digits.slice(5)}`;
 }
 
 function StageSelect({

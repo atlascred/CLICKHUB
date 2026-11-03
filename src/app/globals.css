@@ -3,48 +3,48 @@
 @tailwind utilities;
 
 :root {
-  --background: 218 82% 7%;
-  --foreground: 214 38% 92%;
-  --card: 216 76% 12%;
-  --card-foreground: 214 38% 92%;
-  --popover: 216 76% 10%;
-  --popover-foreground: 214 38% 92%;
-  --primary: 211 100% 50%;
+  --background: 218 35% 97%;
+  --foreground: 219 48% 17%;
+  --card: 0 0% 100%;
+  --card-foreground: 213 74% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 213 74% 12%;
+  --primary: 220 83% 51%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 216 63% 15%;
-  --secondary-foreground: 214 38% 92%;
-  --muted: 216 54% 13%;
-  --muted-foreground: 218 20% 67%;
-  --accent: 217 72% 18%;
-  --accent-foreground: 214 38% 95%;
-  --destructive: 0 78% 55%;
+  --secondary: 210 25% 94%;
+  --secondary-foreground: 213 74% 12%;
+  --muted: 210 25% 94%;
+  --muted-foreground: 218 16% 44%;
+  --accent: 218 100% 96%;
+  --accent-foreground: 213 74% 12%;
+  --destructive: 0 74% 52%;
   --destructive-foreground: 0 0% 100%;
-  --border: 213 68% 22%;
-  --input: 213 68% 22%;
-  --ring: 211 100% 50%;
+  --border: 218 28% 91%;
+  --input: 218 24% 85%;
+  --ring: 220 83% 51%;
   --radius: 0.875rem;
 }
 
 .dark {
-  --background: 218 82% 7%;
-  --foreground: 214 38% 92%;
-  --card: 216 76% 12%;
-  --card-foreground: 214 38% 92%;
-  --popover: 216 76% 10%;
-  --popover-foreground: 214 38% 92%;
-  --primary: 211 100% 50%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 216 63% 15%;
-  --secondary-foreground: 214 38% 92%;
-  --muted: 216 54% 13%;
-  --muted-foreground: 218 20% 67%;
-  --accent: 217 72% 18%;
-  --accent-foreground: 214 38% 95%;
-  --destructive: 0 78% 55%;
+  --background: 213 74% 8%;
+  --foreground: 210 40% 96%;
+  --card: 213 62% 12%;
+  --card-foreground: 210 40% 96%;
+  --popover: 213 62% 12%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 193 100% 52%;
+  --primary-foreground: 213 74% 8%;
+  --secondary: 213 40% 18%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 213 40% 18%;
+  --muted-foreground: 212 18% 70%;
+  --accent: 213 52% 18%;
+  --accent-foreground: 210 40% 96%;
+  --destructive: 0 74% 52%;
   --destructive-foreground: 0 0% 100%;
-  --border: 213 68% 22%;
-  --input: 213 68% 22%;
-  --ring: 211 100% 50%;
+  --border: 213 34% 22%;
+  --input: 213 34% 22%;
+  --ring: 193 100% 52%;
 }
 
 * {
@@ -53,52 +53,89 @@
 
 body {
   @apply bg-background text-foreground antialiased;
-  background-image:
-    radial-gradient(circle at 10% 0%, rgba(14, 115, 216, 0.18), transparent 24rem),
-    radial-gradient(circle at 100% 15%, rgba(0, 255, 135, 0.07), transparent 20rem),
-    linear-gradient(135deg, #010814 0%, #031733 44%, #061c3c 100%);
-  min-height: 100vh;
+  font-feature-settings: "ss01", "cv11";
 }
+
+.login-page { color-scheme: light; --background: 218 35% 97%; --foreground: 219 48% 17%; --ring: 220 83% 51%; }
+
+@layer components {
+  .crm-surface {
+    background-image: radial-gradient(ellipse at 100% 0%, hsl(var(--primary) / 0.12), transparent 50%), linear-gradient(135deg, hsl(var(--primary) / 0.025), transparent 65%);
+  }
+  .crm-sidebar {
+    background: radial-gradient(ellipse at 0% 0%, #214e98 0%, transparent 55%), linear-gradient(165deg, #102d56 0%, #0b2040 55%, #091b35 100%);
+    box-shadow: 8px 0 40px rgb(10 35 80 / 0.09);
+  }
+  .crm-card {
+    box-shadow: 0 2px 5px rgb(16 35 66 / 0.025), 0 8px 24px rgb(16 35 66 / 0.025);
+  }
+  .crm-intro {
+    animation: crm-enter 450ms ease-out both;
+  }
+  .crm-hero {
+    background: radial-gradient(ellipse at 85% 10%, #3c7af4 0%, transparent 55%), linear-gradient(115deg, #123367, #1a54c8);
+    box-shadow: 0 12px 30px rgb(27 76 169 / 0.16);
+  }
+  .crm-card-heading {
+    background: linear-gradient(100deg, hsl(var(--primary) / 0.065), transparent 85%);
+    border-bottom: 1px solid hsl(var(--border));
+    margin-bottom: 1.25rem;
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+}
+
+@keyframes crm-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* The inbox owns its viewport; only the contact list and messages scroll. */
+.wa-inbox { display: flex; flex-direction: column; gap: 8px; height: calc(100dvh - 88px); min-height: 400px; }
+.wa-toolbar { flex-shrink: 0; box-shadow: none; }
+.wa-columns { display: grid; grid-template-columns: 320px minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden; border: 1px solid hsl(var(--border)); border-radius: 12px; }
+.wa-list-panel, .wa-chat-panel { display: flex; flex-direction: column; min-height: 0; border: 0; border-radius: 0; box-shadow: none; overflow: hidden; }
+.wa-list-panel { border-right: 1px solid hsl(var(--border)); }
+.wa-chat-panel { background: #efeae2; }
+.wa-messages { background-color: #efeae2; background-image: radial-gradient(#a49b8e22 1px, transparent 1px); background-size: 18px 18px; }
+.dark .wa-messages, .dark .wa-chat-panel { background-color: #101e25; }
+[data-sidebar-collapsed="true"] .crm-sidebar { width: 80px; }
+[data-sidebar-collapsed="true"] .crm-sidebar > div > div:first-child { padding: 16px; }
+[data-sidebar-collapsed="true"] .crm-sidebar > div > div:first-child > div:last-child,
+[data-sidebar-collapsed="true"] .crm-sidebar nav p,
+[data-sidebar-collapsed="true"] .crm-sidebar nav a > span:not(:first-child),
+[data-sidebar-collapsed="true"] .crm-sidebar nav a > svg,
+[data-sidebar-collapsed="true"] .crm-sidebar nav [aria-disabled] > span:not(:first-child),
+[data-sidebar-collapsed="true"] .crm-sidebar > div > div:last-child a > span:not(:first-child),
+[data-sidebar-collapsed="true"] .crm-sidebar > div > div:last-child a > svg { display: none; }
+[data-sidebar-collapsed="true"] .crm-sidebar nav a,
+[data-sidebar-collapsed="true"] .crm-sidebar nav [aria-disabled] { justify-content: center; padding-inline: 4px; }
+.crm-sidebar nav { scrollbar-width: none; -ms-overflow-style: none; }
+.crm-sidebar nav::-webkit-scrollbar { display: none; width: 0; height: 0; }
+@media (max-width: 1023px) {
+  .wa-columns { grid-template-columns: minmax(0, 1fr); }
+  .wa-inbox[data-mobile-chat="false"] .wa-chat-panel,
+  .wa-inbox[data-mobile-chat="true"] .wa-list-panel { display: none; }
+}
+@media (max-width: 767px) {
+  .wa-inbox { height: calc(100dvh - 152px - env(safe-area-inset-bottom)); min-height: 0; }
+  .wa-toolbar h3 { font-size: 13px; }
+  .crm-mobile-nav { padding-bottom: env(safe-area-inset-bottom); }
+  .crm-main { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+  .crm-surface input, .crm-surface textarea, .crm-surface select { font-size: 16px; }
+  .wa-inbox[data-mobile-chat="true"] .wa-toolbar { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-intro { animation: none; }
+}
+
+::selection { background: hsl(var(--primary) / 0.18); }
+
+:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 3px; }
 
 button,
 input,
 select,
 textarea {
   font: inherit;
-}
-
-@layer base {
-  ::selection {
-    @apply bg-primary/40 text-white;
-  }
-
-  select {
-    @apply border-input bg-background text-foreground outline-none;
-  }
-}
-
-@layer components {
-  .glass-panel {
-    @apply border border-blue-400/15 bg-[#031936]/80 shadow-panel backdrop-blur-xl;
-  }
-
-  .neon-ring {
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(31, 132, 255, 0.08), 0 18px 60px rgba(0, 19, 52, 0.38);
-  }
-
-  .crm-table {
-    @apply overflow-hidden rounded-xl border border-blue-400/15 bg-[#031936]/70;
-  }
-
-  .crm-table table {
-    @apply w-full text-sm;
-  }
-
-  .crm-table th {
-    @apply bg-blue-500/10 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-blue-100;
-  }
-
-  .crm-table td {
-    @apply border-t border-blue-400/10 px-3 py-3 text-slate-200;
-  }
 }

@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Eye, EyeOff, Lock, Mail } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, LoaderCircle, Lock, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { navigationItems } from "@/config/navigation";
@@ -26,7 +26,8 @@ export function LoginForm() {
     setError("");
     const formData = new FormData(event.currentTarget);
 
-    const response = await fetch("/api/auth/login", {
+    try {
+      const response = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -42,20 +43,27 @@ export function LoginForm() {
       return;
     }
 
-    setError(result.message);
-    setLoading(false);
+      setError(result.message);
+    } catch {
+      setError("Não foi possível conectar. Confira sua conexão e tente novamente.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
-    <form className="space-y-4" onSubmit={handleSubmit}>
+    <form className="space-y-5" onSubmit={handleSubmit} aria-busy={loading}>
       <label className="block space-y-2">
         <span className="text-sm font-medium">E-mail</span>
         <div className="relative">
-          <Mail className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
+          <Mail className="pointer-events-none absolute left-4 top-4 h-4 w-4 text-slate-400" />
           <Input
-            className="pl-9"
+            className="h-12 rounded-xl border-slate-200 bg-slate-50/70 pl-11 text-base text-slate-950 placeholder:text-slate-400 focus-visible:ring-blue-600"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
             name="email"
-            placeholder="usuario@clickhubnet.com.br"
+            placeholder="usuario@clickhub.com.br"
             required
             type="email"
           />
@@ -64,9 +72,10 @@ export function LoginForm() {
       <label className="block space-y-2">
         <span className="text-sm font-medium">Senha</span>
         <div className="relative">
-          <Lock className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
+          <Lock className="pointer-events-none absolute left-4 top-4 h-4 w-4 text-slate-400" />
           <Input
-            className="pl-9 pr-10"
+            className="h-12 rounded-xl border-slate-200 bg-slate-50/70 pl-11 pr-12 text-base text-slate-950 placeholder:text-slate-400 focus-visible:ring-blue-600"
+            autoComplete="current-password"
             name="password"
             placeholder="Digite sua senha"
             required
@@ -74,7 +83,8 @@ export function LoginForm() {
           />
           <button
             aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
-            className="absolute right-3 top-3 text-slate-400"
+            aria-pressed={showPassword}
+            className="absolute right-0.5 top-0.5 grid h-11 w-11 place-items-center rounded-lg text-slate-500 hover:text-blue-700"
             onClick={() => setShowPassword((current) => !current)}
             type="button"
           >
@@ -82,9 +92,10 @@ export function LoginForm() {
           </button>
         </div>
       </label>
-      {error ? <p className="rounded-md bg-red-500/15 p-3 text-sm text-red-100">{error}</p> : null}
-      <Button className="w-full" disabled={loading} type="submit">
-        {loading ? "Entrando" : "Entrar"}
+      {error ? <p role="alert" className="rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+      <Button className="h-12 w-full justify-between rounded-xl bg-blue-600 px-5 font-semibold text-white shadow-lg shadow-blue-600/15 hover:bg-blue-700" disabled={loading} type="submit">
+        {loading ? "Entrando..." : "Entrar na plataforma"}
+        {loading ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <ArrowRight className="h-4 w-4" />}
       </Button>
     </form>
   );

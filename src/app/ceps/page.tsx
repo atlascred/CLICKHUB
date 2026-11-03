@@ -3,7 +3,7 @@ import { CepPanel } from "@/modules/ceps/components/cep-panel";
 
 export default function CepsPage() {
   return (
-    <AppShell title="Cobertura">
+    <AppShell title="CEPs">
       <CepPanel />
     </AppShell>
   );

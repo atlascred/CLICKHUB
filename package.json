@@ -12,7 +12,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "seed": "npx tsx scripts/seed.ts",
     "import:ceps": "node scripts/import-ceps.mjs",
-    "test": "node --require ./tests/register.cjs --test tests/chatbot.test.ts",
+    "test": "node --require ./tests/register.cjs --test tests/*.test.ts",
     "test:chatbot": "node --require ./tests/register.cjs --test tests/chatbot.test.ts",
     "simulate:chatbot": "node scripts/simulate-chatbot.cjs"
   },

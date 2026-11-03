@@ -1,36 +1,24 @@
-import { LeadStatus, Prisma, type User } from "@prisma/client";
+import { LeadStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { leadSourceWhere, type LeadAccessUser } from "@/lib/lead-source-access";
 
 export type DashboardFilters = {
   from?: Date;
   to?: Date;
 };
 
-const dashboardKanbanStatusOrder = [
-  LeadStatus.NEW,
-  LeadStatus.QUALIFIED,
-  LeadStatus.CONTACTED,
-  LeadStatus.PROPOSAL,
-  LeadStatus.WON,
-  LeadStatus.LOST,
-];
-
 export class DashboardRepository {
-  async getMetrics(filters: DashboardFilters = {}, user?: Pick<User, "id" | "role">) {
+  async getMetrics(filters: DashboardFilters = {}, user?: LeadAccessUser) {
     const chartDateFilter = buildDateFilter(filters);
     const accessWhere = buildDashboardAccessWhere(user);
     const chartLeadWhere: Prisma.LeadWhereInput = { deletedAt: null, ...accessWhere, ...chartDateFilter };
-    const chartConversationWhere: Prisma.ChatConversationWhereInput = { deletedAt: null, ...chartDateFilter };
     const todayFilter = buildTodayFilter();
     const wonWhere: Prisma.LeadWhereInput = { deletedAt: null, status: LeadStatus.WON, ...buildWonAccessWhere(user) };
     const visibleLeadWhere: Prisma.LeadWhereInput = { deletedAt: null, ...accessWhere };
 
-    const [newLeads, totalLeads, conversations, appointments, expenses, leadStatuses, wonLeadRows, chartLeads, chartConversations, recentLeads, kanbanPreview] =
+    const [newLeads, expenses, leadStatuses, wonLeadRows, chartLeads, recentLeads] =
       await Promise.all([
       prisma.lead.count({ where: { deletedAt: null, createdAt: todayFilter, ...accessWhere } }),
-      prisma.lead.count({ where: visibleLeadWhere }),
-      prisma.chatConversation.count({ where: { deletedAt: null } }),
-      prisma.appointment.count({ where: user?.role === "EMPLOYEE" ? { deletedAt: null, responsibleId: user.id } : { deletedAt: null } }),
       user?.role === "EMPLOYEE" ? Promise.resolve(0) : getOpenExpensesTotal(),
       prisma.lead.groupBy({
         by: ["status"],
@@ -46,34 +34,12 @@ export class DashboardRepository {
         select: { createdAt: true },
         orderBy: { createdAt: "asc" },
       }),
-      prisma.chatConversation.findMany({
-        where: chartConversationWhere,
-        select: { createdAt: true },
-        orderBy: { createdAt: "asc" },
-      }),
       prisma.lead.findMany({
         where: visibleLeadWhere,
         orderBy: { createdAt: "desc" },
         take: 6,
         include: { plan: true, assignedUser: true },
       }),
-      Promise.all(dashboardKanbanStatusOrder.map(async (status) => {
-        const leads = await prisma.lead.findMany({
-          where: { ...visibleLeadWhere, status },
-          orderBy: { updatedAt: "desc" },
-          take: 3,
-          include: { plan: true },
-        });
-        return {
-          status,
-          leads: leads.map((lead) => ({
-            id: lead.id,
-            name: lead.name,
-            planName: lead.planName ?? lead.plan?.name ?? lead.notes ?? "Sem interesse",
-            updatedAt: lead.updatedAt.toISOString(),
-          })),
-        };
-      })),
     ]);
 
     const wonValue = wonLeadRows.reduce((sum, lead) => sum + getLeadValue(lead), 0);
@@ -96,9 +62,6 @@ export class DashboardRepository {
 
     return {
       newLeads,
-      totalLeads,
-      conversations,
-      appointments,
       wonLeads,
       totalValue: wonValue,
       expenses,
@@ -107,8 +70,7 @@ export class DashboardRepository {
         status: item.status,
         count: item._count.status,
       })),
-      kanbanPreview,
-      performanceChart: buildPerformanceChart(chartLeads, chartConversations, filters),
+      leadChart: buildLeadChart(chartLeads, filters),
       planSales: planSales.sort((a, b) => b.totalValue - a.totalValue),
       recentLeads: recentLeads.map((lead) => ({
         id: lead.id,
@@ -130,20 +92,17 @@ function getLeadValue(lead: { planValue?: unknown; expectedValue: unknown; plan?
   return Number(lead.planValue ?? lead.expectedValue ?? lead.plan?.price ?? 0);
 }
 
-function buildDashboardAccessWhere(user?: Pick<User, "id" | "role">): Prisma.LeadWhereInput {
-  if (user?.role !== "EMPLOYEE") {
-    return {};
-  }
-
-  return { assignedUserId: user.id };
+function buildDashboardAccessWhere(user?: LeadAccessUser): Prisma.LeadWhereInput {
+  const sourceWhere = leadSourceWhere(user);
+  return user?.role === "EMPLOYEE" ? { assignedUserId: user.id, ...sourceWhere } : sourceWhere;
 }
 
-function buildWonAccessWhere(user?: Pick<User, "id" | "role">): Prisma.LeadWhereInput {
-  if (user?.role !== "EMPLOYEE") {
-    return {};
-  }
+function buildWonAccessWhere(user?: LeadAccessUser): Prisma.LeadWhereInput {
+  const sourceWhere = leadSourceWhere(user);
+  if (user?.role !== "EMPLOYEE") return sourceWhere;
 
   return {
+    ...sourceWhere,
     OR: [
       { closedByUserId: user.id },
       { closedByUserId: null, assignedUserId: user.id },
@@ -185,35 +144,29 @@ function buildDateFilter(filters: DashboardFilters) {
   };
 }
 
-function buildPerformanceChart(leads: Array<{ createdAt: Date }>, conversations: Array<{ createdAt: Date }>, filters: DashboardFilters) {
+function buildLeadChart(leads: Array<{ createdAt: Date }>, filters: DashboardFilters) {
   const from = filters.from ?? daysAgo(6);
   const to = filters.to ?? new Date();
   const days = Math.max(1, Math.ceil((endOfDay(to).getTime() - startOfDay(from).getTime()) / 86_400_000) + 1);
-  const buckets = new Map<string, { leads: number; conversations: number }>();
+  const buckets = new Map<string, number>();
 
   for (let index = 0; index < days; index += 1) {
     const date = new Date(startOfDay(from));
     date.setDate(date.getDate() + index);
-    buckets.set(dateKey(date), { leads: 0, conversations: 0 });
+    buckets.set(dateKey(date), 0);
   }
 
   for (const lead of leads) {
     const key = dateKey(lead.createdAt);
-    const bucket = buckets.get(key);
-    if (bucket) bucket.leads += 1;
+    if (buckets.has(key)) {
+      buckets.set(key, (buckets.get(key) ?? 0) + 1);
+    }
   }
 
-  for (const conversation of conversations) {
-    const key = dateKey(conversation.createdAt);
-    const bucket = buckets.get(key);
-    if (bucket) bucket.conversations += 1;
-  }
-
-  return Array.from(buckets.entries()).map(([date, counts]) => ({
+  return Array.from(buckets.entries()).map(([date, count]) => ({
     date,
     label: formatShortDate(date),
-    leads: counts.leads,
-    conversations: counts.conversations,
+    count,
   }));
 }
 

@@ -7,14 +7,17 @@ import { requireCurrentUser } from "@/lib/auth-context";
 import { assertPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { permissions } from "@/constants/permissions";
+import { leadSourceLabel } from "@/modules/leads/types/lead-source";
+import { leadSourceWhere } from "@/lib/lead-source-access";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await requireCurrentUser();
     assertPermission(user, permissions.leadsExport);
 
+    const agentScope = new URL(request.url).searchParams.get("agent");
     const leads = await prisma.lead.findMany({
-      where: { deletedAt: null, ...(user.role === "EMPLOYEE" ? { assignedUserId: user.id } : {}) },
+      where: { deletedAt: null, ...leadSourceWhere(user, agentScope ?? undefined), ...(user.role === "EMPLOYEE" ? { assignedUserId: user.id } : {}) },
       include: { assignedUser: true, plan: true, kanbanStage: true },
       orderBy: { createdAt: "desc" },
     });
@@ -27,7 +30,7 @@ export async function GET() {
       CPF: lead.cpfCnpj ?? "",
       DataNascimento: lead.birthDate?.toISOString().slice(0, 10) ?? "",
       Status: lead.kanbanStage?.name ?? lead.status,
-      Origem: lead.source,
+      Origem: leadSourceLabel(lead.source),
       Rua: lead.address ?? "",
       Numero: lead.streetNumber ?? "",
       Complemento: lead.complement ?? "",
@@ -59,7 +62,7 @@ export async function GET() {
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="leads-click-hubnet.xlsx"`,
+        "Content-Disposition": `attachment; filename="leads-clickhub.xlsx"`,
       },
     });
   } catch (error) {

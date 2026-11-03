@@ -1,5 +1,4 @@
 import { cn } from "@/utils/cn";
-import { appConfig } from "@/config/app";
 
 type BrandLogoProps = {
   compact?: boolean;
@@ -14,15 +13,18 @@ export function BrandLogo({
   imageClassName,
   priority = false,
 }: BrandLogoProps) {
-  const src = "/brand/logosemfundo.png";
-  const alt = appConfig.name;
-
   return (
-    <div className={cn("relative overflow-hidden", compact ? "h-12 w-12" : "h-40 w-72", className)}>
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-md border border-cyan-300/20 bg-[#04162b]",
+        compact ? "h-12 w-12" : "h-28 w-28",
+        className,
+      )}
+    >
       <img
-        src={src}
-        alt={alt}
-        className={cn("h-full w-full object-contain", compact ? "p-0.5" : "", imageClassName)}
+        src="/brand/logosemfundo.png"
+        alt="CLICKHUB"
+        className={cn("h-full w-full object-contain p-1", imageClassName)}
         loading={priority ? "eager" : "lazy"}
       />
     </div>

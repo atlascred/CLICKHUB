@@ -3,7 +3,7 @@ import { UserManagement } from "@/modules/usuarios/components/user-management";
 
 export default function UsuariosPage() {
   return (
-    <AppShell title="Usuários">
+    <AppShell title="Cadastros/Fornecedores">
       <UserManagement />
     </AppShell>
   );

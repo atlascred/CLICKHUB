@@ -1,4 +1,5 @@
 import { LeadRepository } from "@/repositories/lead.repository";
+import type { LeadAccessUser } from "@/lib/lead-source-access";
 import type { User } from "@prisma/client";
 import { createLeadSchema, updateLeadSchema } from "@/modules/leads/schemas/lead.schema";
 import type { CreateLeadInput, UpdateLeadInput } from "@/modules/leads/types/lead";
@@ -6,8 +7,8 @@ import type { CreateLeadInput, UpdateLeadInput } from "@/modules/leads/types/lea
 export class LeadService {
   constructor(private readonly leadRepository = new LeadRepository()) {}
 
-  async list(user?: Pick<User, "id" | "role">) {
-    return this.leadRepository.findMany(user);
+  async list(user?: LeadAccessUser, agentScope?: string) {
+    return this.leadRepository.findMany(user, agentScope);
   }
 
   async get(id: string, user?: Pick<User, "id" | "role">) {
