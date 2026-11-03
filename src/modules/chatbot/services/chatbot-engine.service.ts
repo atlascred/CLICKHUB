@@ -330,7 +330,7 @@ export class ChatbotEngineService {
     if (!["START", "ASK_CEP", "CORRECTION"].includes(input.state) && memory.cep && memory.cep !== input.memory.cep && coverageDataset(input.agent) && !(await this.validateCoverage(memory.cep, input.agent)).available) return coverageUnavailable(memory, memory.cep);
     const mentionedPlan = selectPlan(evidence.plan || text, plans);
     const explicitPlan = (Boolean(evidence.plan) || /(?:trocar|mudar|alterar|prefiro|quero|plano|ficar com|opcao)/i.test(normalizeText(text)))
-      && /\b(600|800|1000|1\s*giga|seiscentos|oitocentos)\b/i.test(normalizeText(text))
+      && /\b(600|700|800|1000|1\s*giga|seiscentos|setecentos|oitocentos|disney)\b/i.test(normalizeText(text))
       && !text.includes("?") && !/\bnao\b/.test(normalizeText(text));
     const conflict = conflictingFields(originalText);
     if (conflict) return { state: input.state, memory: { ...input.memory }, reply: `${conflict}\n\n${promptForState(input.state, firstName)}` };
@@ -1476,6 +1476,14 @@ function selectPlan(text: string, plans: PlanCandidate[]) {
   const byId = plans.find((plan) => normalized.includes(normalizeText(plan.id)));
   if (byId) return byId;
 
+  // A shared speed must not select the base plan when a named benefit was requested.
+  if (normalized.includes("disney") && !/\b(?:sem|nao(?: quero)?)\s+(?:o\s+)?disney/.test(normalized)) {
+    return plans.find(plan => normalizeText(plan.name).includes("disney")) ?? null;
+  }
+  const fullName = [...plans].sort((a, b) => b.name.length - a.name.length)
+    .find(plan => normalized.includes(normalizeText(plan.name)));
+  if (fullName) return fullName;
+
   const byName = plans.find((plan) => {
     const name = normalizeText(plan.name);
     const speed = normalizeText(plan.speed);
@@ -1491,6 +1499,7 @@ function selectPlan(text: string, plans: PlanCandidate[]) {
     { terms: ["400", "quatrocentos"], chip: false },
     { terms: ["500", "quinhentos"], chip: false },
     { terms: ["600", "seiscentos"], chip: false },
+    { terms: ["700", "setecentos"], chip: false },
     { terms: ["800", "oitocentos"], chip: false },
     { terms: ["1gb", "1 giga", "um giga", "1000"], chip: false },
   ];

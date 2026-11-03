@@ -421,7 +421,7 @@ test('77 — mesma mensagem em instâncias diferentes tem identidade independent
 });
 test('78 — catálogo GIGA é separado e não herda chip, roteador ou prazo de Globoplay', () => {
   const { gigaCommercialPlans } = require('../scripts/lib/giga-commercial-plans');
-  assert.deepEqual(gigaCommercialPlans.map((p: any) => p.price), [99.99,109.99,139.99]); assert.deepEqual(plans.map(p => p.price), [55,70,85]);
+  assert.deepEqual(gigaCommercialPlans.map((p: any) => p.price), [100,120,150,200]); assert.deepEqual(plans.map(p => p.price), [55,70,85]);
   for (const plan of gigaCommercialPlans) { assert.ok(plan.description.includes('Globoplay grátis')); assert.ok(!/chip|Wi-Fi|12 meses/.test(plan.description)); }
 });
 test('79 — um cliente conversa com os dois agentes sem compartilhar memória, histórico ou recibos', async () => {
@@ -456,7 +456,7 @@ test('82 — cada agente apresenta somente o seu catálogo e seus valores', asyn
   const { isolatedDatabase } = require('./agent-isolation-fixture'); const { scopedEvolutionId } = require('../src/services/evolution-context'); const f = isolatedDatabase(); const sent: string[] = [];
   const engine = new ChatbotEngineService({} as any,new ChatbotRepository(f.db),{} as any,{interpretConversation:async()=>null} as any,{send:async({message})=>{sent.push(message);}});
   await engine.processIncomingMessage({phone:'5511900000000',message:'quais planos?',provider:'evolution',instanceId:'GIGA CLICK',providerId:scopedEvolutionId('GIGA CLICK','list')});
-  const text=sent.at(-1)!; assert.ok(text.includes('99,99'));assert.ok(text.includes('109,99'));assert.ok(text.includes('139,99'));assert.ok(!text.includes('55,00'));assert.ok(!text.includes('10 GB'));
+  const text=sent.at(-1)!; for(const value of ['100,00','120,00','150,00','200,00'])assert.ok(text.includes(value));assert.ok(text.includes('DISNEY PLUS'));assert.ok(!text.includes('55,00'));assert.ok(!text.includes('10 GB'));
 });
 test('83 — agente desconhecido ou duplicado nunca usa o primeiro agente ativo', async () => {
   const { isolatedDatabase } = require('./agent-isolation-fixture'); const f = isolatedDatabase();const repo=new ChatbotRepository(f.db);
@@ -480,7 +480,7 @@ test('85 — simulação de cadastro GIGA não altera agentes ou catálogo CLICK
 test('86 — cadastro repetido da GIGA mantém os mesmos planos e não altera preços CLICK', async () => {
   const { isolatedDatabase } = require('./agent-isolation-fixture'); const { configureGigaAgent } = require('../scripts/lib/configure-giga-agent');const f=isolatedDatabase(); const before=JSON.stringify(f.plans.filter((p:any)=>p.agentId==='agent-click'));
   await configureGigaAgent(f.db,{apply:true,primaryNumber:'001',gigaNumber:'002'});await configureGigaAgent(f.db,{apply:true,primaryNumber:'001',gigaNumber:'002'});
-  assert.equal(f.plans.length,6);assert.equal(JSON.stringify(f.plans.filter((p:any)=>p.agentId==='agent-click')),before);
+  assert.equal(f.plans.length,7);assert.equal(JSON.stringify(f.plans.filter((p:any)=>p.agentId==='agent-click')),before);
 });
 test('87 — envio real do adaptador é simulado e usa exclusivamente o token da instância selecionada', async () => {
   const { withEvolutionInstance }=require('../src/services/evolution-context');const {sendEvolutionTextMessage}=require('../src/services/evolution');const previous={...process.env};const oldFetch=global.fetch;const requests:any[]=[];
@@ -502,7 +502,7 @@ test('88 — duas contratações do mesmo telefone geram leads distintos com val
     for(const text of ['Cliente Simulado',fixtureDocument(),'01/01/1995','teste@example.com','10'])await say(text);
     assert.equal(f.leads.length,instance==='CLICK'?0:1);await say('sim');assert.equal(c.state,'FINISHED');
   }
-  assert.equal(f.leads.length,2);assert.deepEqual(f.leads.map((l:any)=>l.planValue),[55,99.99]);assert.notEqual(f.leads[0].planId,f.leads[1].planId);
+  assert.equal(f.leads.length,2);assert.deepEqual(f.leads.map((l:any)=>l.planValue),[55,100]);assert.notEqual(f.leads[0].planId,f.leads[1].planId);
 });
 test('89 — filas do mesmo contato não agrupam mensagens de instâncias diferentes', async () => {
   const store=new MemoryBatchStore();const batch=new MessageBatchService(store,5);const runs:any[]=[];
@@ -511,11 +511,11 @@ test('89 — filas do mesmo contato não agrupam mensagens de instâncias difere
 });
 
 test('90 — criar GIGA clona só a persona e cria catálogo próprio sem copiar credenciais', async () => {
-  const {isolatedDatabase}=require('./agent-isolation-fixture');const {configureGigaAgent}=require('../scripts/lib/configure-giga-agent');const f=isolatedDatabase();f.agents.splice(1,1);f.plans.splice(3,3);
+  const {isolatedDatabase}=require('./agent-isolation-fixture');const {configureGigaAgent}=require('../scripts/lib/configure-giga-agent');const f=isolatedDatabase();f.agents.splice(1,1);f.plans.splice(3);
   Object.assign(f.agents[0],{gender:'FEMALE',personality:'Persona simulada',rules:{},flow:{},openAiModel:null,zapiToken:'primary-only-test-secret',zapiClientToken:'primary-only-client-test-secret'});
   const before=JSON.stringify(f.plans);await configureGigaAgent(f.db,{apply:true,primaryNumber:'001',gigaNumber:'002'});
   const giga=f.agents.find((a:any)=>a.zapiInstanceId==='GIGA CLICK') as any;
-  assert.ok(giga);assert.equal(giga.zapiToken,null);assert.equal(giga.zapiClientToken,null);assert.equal(giga.name,'Lily');assert.equal(f.plans.length,6);assert.equal(JSON.stringify(f.plans.filter((p:any)=>p.agentId==='agent-click')),before);
+  assert.ok(giga);assert.equal(giga.zapiToken,null);assert.equal(giga.zapiClientToken,null);assert.equal(giga.name,'Lily');assert.equal(f.plans.length,7);assert.equal(JSON.stringify(f.plans.filter((p:any)=>p.agentId==='agent-click')),before);
 });
 
 test('91 — configuração secundária inválida não retira CLICK do agendador', () => {
@@ -615,7 +615,8 @@ test('101 — persistência sem readback mantém escrita e dispensa somente leit
 });
 
 function scopedCoverageSimulator(state='ASK_CEP', memory:object={}) {
-  const scopedPlans=plans.map((plan,i)=>({...plan,id:`giga-coverage-${i}`,price:[99.99,109.99,139.99][i],description:'Globoplay grátis'}));
+  const {gigaCommercialPlans}=require('../scripts/lib/giga-commercial-plans');
+  const scopedPlans=gigaCommercialPlans.map((plan:any,i:number)=>({...plan,id:`giga-coverage-${i}`}));
   const agent={id:'coverage-giga',name:'Lily',zapiInstanceId:'GIGA CLICK',plans:scopedPlans,personality:'Consultora virtual',rules:{coveragePolicy:{mode:'required',dataset:'agent-coverage:coverage-giga:test'}},enableReplyDelay:false,enableTyping:false};
   const s=simulator('cobertura por instância',{state,memory});
   s.repo.getAgentByInstance=async()=>agent as any;
@@ -623,7 +624,7 @@ function scopedCoverageSimulator(state='ASK_CEP', memory:object={}) {
   return {...s,scopedPlans,agent};
 }
 test('102 — GIGA segue no mesmo fluxo quando CEP com zero inicial está na sua base',async()=>{
- const s=scopedCoverageSimulator();await s.say('01139-000');assert.equal(s.conversation.state,'ASK_STREET_NUMBER');await s.say('123');assert.equal(s.conversation.state,'ASK_COMPLEMENT');await s.say('não');assert.equal(s.conversation.state,'CHOOSE_PLAN');assert.ok(s.sends.at(-1)!.includes('99,99'));assert.ok(!/claro|vivo|cris/i.test(s.sends.join('\n')));
+ const s=scopedCoverageSimulator();await s.say('01139-000');assert.equal(s.conversation.state,'ASK_STREET_NUMBER');await s.say('123');assert.equal(s.conversation.state,'ASK_COMPLEMENT');await s.say('não');assert.equal(s.conversation.state,'CHOOSE_PLAN');assert.ok(s.sends.at(-1)!.includes('100,00'));assert.ok(!/claro|vivo|cris/i.test(s.sends.join('\n')));
 });
 test('103 — GIGA recusa CEP ausente sem consultar ViaCEP, listar planos ou criar lead',async()=>{
  const s=scopedCoverageSimulator();let externalCalls=0;const previous=global.fetch;global.fetch=async()=>{externalCalls++;throw new Error('No external lookup for missing coverage');};
@@ -654,4 +655,15 @@ test('108 — recebimento de lote com extração de mídia grava somente campos 
  s.repo.claimInboundMessage=async(m:any)=>{assert.equal(Object.hasOwn(m,'extractedData'),false);return original(m);};
  const batch=[{providerId:'media-first',body:'01001000',extractedData:{}},{providerId:'media-second',body:'123',extractedData:{streetNumber:'123'}}];
  await s.say('01001000\n123','media-first',{batchMessages:batch});assert.equal(s.conversation.state,'ASK_COMPLEMENT');assert.equal(s.sends.length,1);
+});
+
+test('109 — VIVO distingue as duas opções de 600 MEGA, Disney e todas as escolhas numéricas',async()=>{
+ for(const [text,index]of [['600 mega',0],['600 MEGA + DISNEY PLUS',1],['quero 600 com Disney',1],['Disney+',1],['600 sem Disney',0],['700',2],['setecentos mega',2],['1 giga',3],['1',0],['2',1],['3',2],['4',3]] as const){
+  const s=scopedCoverageSimulator('CHOOSE_PLAN');await s.say(text);
+  if((s.conversation.memory as any).pendingUpsellPlanId)await s.say('não');
+  assert.equal((s.conversation.memory as any).planId,s.scopedPlans[index].id,text);assert.equal((s.conversation.memory as any).planValue,[100,120,150,200][index],text);assert.equal(s.conversation.state,'ASK_NAME',text);
+ }
+});
+test('110 — mudar para 700 MEGA ou Disney durante cadastro mantém a etapa e o preço correto',async()=>{
+ for(const [text,index]of [['quero mudar para 700 mega',2],['quero mudar para Disney Plus',1]] as const){const s=scopedCoverageSimulator('ASK_EMAIL',{planId:'giga-coverage-0',planName:'600 MEGA',planValue:100});await s.say(text);assert.equal(s.conversation.state,'ASK_EMAIL');assert.equal((s.conversation.memory as any).planId,s.scopedPlans[index].id);assert.equal((s.conversation.memory as any).planValue,[100,120,150,200][index]);}
 });
