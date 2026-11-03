@@ -1,7 +1,7 @@
 import {OpenAiService} from "../src/services/openai/openai.service";
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {sendEvolutionAudioMessage,sendEvolutionMediaMessage,parseEvolutionWebhookPayload} from '../src/services/evolution';
+import {sendEvolutionAudioMessage,sendEvolutionMediaMessage,parseEvolutionWebhookPayload,extractEvolutionStatusUpdates,isEvolutionStatusWebhook} from '../src/services/evolution';
 import {withEvolutionInstance} from '../src/services/evolution-context';
 import {attachmentForMessage,decodeMediaBase64,describeMedia,mediaEnvelope} from '../src/lib/whatsapp-media';
 import {downloadEvolutionMedia} from '../src/services/evolution-media';
@@ -70,4 +70,9 @@ test('transcrição recebe os bytes de uma data URL com codec',async()=>{
  let called=0;
  const ai=new OpenAiService(async()=>({apiKey:'fake-test',model:'gpt-4o-mini'}),(()=>({audio:{transcriptions:{create:async(input:any)=>{called++;assert.deepEqual(Buffer.from(await input.file.arrayBuffer()),bytes);assert.equal(input.file.type,'audio/ogg');return{text:'Texto fictício'};}}}})) as any);
  assert.equal(await ai.transcribeAudio({url:`data:audio/ogg;codecs=opus;base64,${base64}`,mimeType:'audio/ogg;codecs=opus'}),'Texto fictício');assert.equal(called,1);
+});
+
+test('callbacks reais Evolution 2.3.7 usam keyId e aceitam nome de evento normalizado',()=>{
+ const payload={event:'MESSAGES_UPDATE',data:{keyId:'provider-audio-id',messageId:'evolution-database-id',status:'READ',fromMe:true}};
+ assert.equal(isEvolutionStatusWebhook(payload),true);assert.deepEqual(extractEvolutionStatusUpdates(payload),[{messageId:'provider-audio-id',status:'lido'}]);
 });

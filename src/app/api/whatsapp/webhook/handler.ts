@@ -52,7 +52,7 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
   if (!isValidEvolutionWebhook(request, rawBody)) return NextResponse.json(errorResponse("Webhook não autorizado.", "UNAUTHORIZED"), { status: 401 });
   const agent = await new ChatbotRepository().getAgentByInstance(instanceName, true);
   if (!agent) throw new Error("Agente da instância não encontrado.");
-  const eventName = String(payload.event ?? "").toLowerCase();
+  const eventName = String(payload.event ?? "").toLowerCase().replace(/_/g, ".");
   const isMessageEvent = eventName === "messages.upsert" || eventName.includes("messages.upsert");
   const isStatusEvent = isEvolutionStatusWebhook(payload);
   const isPresenceEvent = eventName.includes("presence");

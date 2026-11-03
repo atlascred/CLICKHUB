@@ -8,6 +8,7 @@ A Evolution instalada informou versão 2.3.7. O envio de áudio usava o endpoint
 - Imagens, vídeos e documentos continuam em `sendMedia`, com tipo, MIME, nome e legenda. A alternativa multipart utiliza `file` e só é tentada após rejeição HTTP 415. Timeout e erro 5xx não geram reenvio automático.
 - Timeout de mídia é separado do envio de texto. Texto e chatbot mantêm seus tempos de resposta.
 - Fonte do áudio é guardada no histórico, como os demais anexos.
+- Callbacks de status da versão 2.3.7 reconhecem `keyId`, além dos formatos anteriores, e nomes de eventos com ponto ou sublinhado.
 - Atualizações de entrega/leitura fazem merge atômico do JSON, preservando arquivo, MIME e payload de origem; mantêm filtro pelo agente.
 - A central apresenta imagem, player de áudio, player de vídeo, documento, abertura e download. Falha de envio mantém o arquivo e texto selecionados.
 - Gravação escolhe um MIME suportado pelo navegador e a extensão correspondente; trata gravação vazia, falta de suporte e permissão negada. Texto junto com áudio é mantido para envio separado, pois áudio não tem legenda no WhatsApp.
@@ -34,7 +35,7 @@ Sem chave ou com arquivo indisponível, a Lily não inventa conteúdo: o anexo p
 
 - Uploads pelo painel: até 3 MB por arquivo; arquivos vazios são recusados com mensagem clara.
 - Reprodução/download pelo proxy: até 25 MB.
-- 136 testes automatizados, incluindo envio, recepção, envelopes, isolamento, falhas, permissões, ranges, PDFs e transcrição simulada.
+- 137 testes automatizados, incluindo envio, recepção, envelopes, isolamento, falhas, permissões, ranges, PDFs e transcrição simulada.
 - Navegador com APIs simuladas: quatro anexos exibidos, imagem decodificada, áudio reproduzido, metadados do vídeo conferidos e gravação por microfone testada; sem erro de cliente ou overflow em celular.
 - Merge de status e isolamento verificados no Supabase em transação revertida.
 - Testes reais foram autorizados somente para o número do proprietário terminado em 9114. Evidências locais ficam em `.test-output/`, sem credenciais ou conteúdo de outros contatos.

@@ -446,7 +446,7 @@ export function isValidEvolutionWebhook(request: Request, body: string) {
 }
 
 export function parseEvolutionWebhookPayload(payload: Record<string, unknown>) {
-  const event = String(payload.event ?? "").toLowerCase();
+  const event = String(payload.event ?? "").toLowerCase().replace(/_/g, ".");
   const data = payload.data && typeof payload.data === "object" ? (payload.data as Record<string, unknown>) : payload;
   const key = data.key && typeof data.key === "object" ? (data.key as Record<string, unknown>) : {};
   const phone = resolveWebhookPhone(payload, data, key);
@@ -482,7 +482,7 @@ export function parseEvolutionWebhookPayload(payload: Record<string, unknown>) {
 }
 
 export function isEvolutionStatusWebhook(payload: Record<string, unknown>) {
-  return String(payload.event ?? "").toLowerCase() === "messages.update";
+  return String(payload.event ?? "").toLowerCase().replace(/_/g, ".") === "messages.update";
 }
 
 export function extractEvolutionStatusUpdates(payload: Record<string, unknown>) {
@@ -493,7 +493,7 @@ export function extractEvolutionStatusUpdates(payload: Record<string, unknown>) 
     const item = entry as Record<string, unknown>;
     const key = item.key && typeof item.key === "object" ? (item.key as Record<string, unknown>) : {};
     const update = item.update && typeof item.update === "object" ? (item.update as Record<string, unknown>) : item;
-    const messageId = firstString([key.id, item.id, update.id]);
+    const messageId = firstString([key.id, item.keyId, update.keyId, item.id, update.id]);
     if (!messageId) return [];
 
     return [{
