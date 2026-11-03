@@ -191,7 +191,7 @@ export function OverviewPanel() {
             <p className="text-sm font-medium uppercase tracking-[0.24em] text-sky-700">Visão Geral</p>
             <h2 className="mt-2 text-3xl font-semibold text-slate-950">Panorama completo da operação comercial</h2>
             <p className="mt-3 text-sm leading-6 text-slate-600">
-              Distribuição de leads por funcionário, planos vendidos, status, conversas finalizadas pela CLICK, assumidas, tarefas e despesas em um único lugar.
+              Distribuição de leads por funcionário, planos vendidos, status, conversas finalizadas pelos chatbots, assumidas, tarefas e despesas em um único lugar.
             </p>
           </div>
 

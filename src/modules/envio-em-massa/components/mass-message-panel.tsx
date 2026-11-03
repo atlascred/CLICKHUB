@@ -1,5 +1,7 @@
 "use client";
 
+import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
+
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ImagePlus, Loader2, Megaphone, Send, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -120,7 +122,7 @@ export function MassMessagePanel() {
         </CardHeader>
         <CardContent>
           <form className="space-y-5" onSubmit={handleSubmit}>
-            <label className="grid gap-2 text-sm font-medium">WhatsApp de envio<select required disabled={isSending} className="h-10 rounded-md border bg-background px-3" value={agentId} onChange={event=>setAgentId(event.target.value)}><option value="">Selecione CLICK ou GIGA CLICK</option>{agents.map(agent=><option key={agent.id} value={agent.id}>{agent.instanceName}</option>)}</select></label>
+            <label className="grid gap-2 text-sm font-medium">WhatsApp de envio<select required disabled={isSending} className="h-10 rounded-md border bg-background px-3" value={agentId} onChange={event=>setAgentId(event.target.value)}><option value="">Selecione NIO FIBRA ou VIVO FIBRA</option>{agents.map(agent=><option key={agent.id} value={agent.id}>{whatsappAgentLabel(agent.instanceName)}</option>)}</select></label>
             <div className="grid gap-2">
               <p className="text-sm font-medium">Contatos</p>
               <Textarea

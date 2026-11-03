@@ -452,7 +452,7 @@ function UserModal({ user, saving, onClose, onSave }: { user: UserItem | null; s
             <fieldset className="mb-4 rounded-md border border-blue-200 bg-blue-50/50 p-4">
               <legend className="px-1 text-sm font-semibold">Leads permitidos por chatbot</legend>
               <div className="flex flex-wrap gap-4">
-                {([['click', 'CLICK'], ['giga', 'GIGA CLICK'], ['both', 'Ambos']] as const).map(([value, label]) => (
+                {([['click', 'NIO FIBRA'], ['giga', 'VIVO FIBRA'], ['both', 'Ambos']] as const).map(([value, label]) => (
                   <label key={value} className="flex cursor-pointer items-center gap-2 text-sm">
                     <input type="radio" name="leadAgentScope" value={value}
                       checked={getLeadAgentScope(selected) === value}

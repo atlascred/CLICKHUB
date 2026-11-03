@@ -1,5 +1,7 @@
 "use client";
 
+import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
+
 import { useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Loader2, RefreshCw, Server, ShieldCheck, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -154,7 +156,7 @@ export function EvolutionHealthPanel() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <InfoRow label="API" value={data?.config.apiUrl ?? "—"} />
-            <InfoRow label="Instância" value={data?.config.instance ?? "—"} />
+            <InfoRow label="Instância" value={data?.config.instance ? whatsappAgentLabel(data.config.instance) : "—"} />
             <InfoRow label="Número" value={data?.config.defaultNumber ?? "—"} />
             <InfoRow label="Webhook" value={data?.config.webhookUrl ?? "—"} />
             <InfoRow label="Cron protegido" value={data?.config.cronSecretConfigured ? "Sim" : "Não"} />

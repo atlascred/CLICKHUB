@@ -1,5 +1,7 @@
 "use client";
 
+import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
+
 import { ChatMessageMedia } from "./chat-message-media";
 import type { MessageAttachment } from "@/lib/whatsapp-media";
 import type { ReactNode } from "react";
@@ -575,7 +577,7 @@ export function ConversationCenter() {
   }
 
   async function startConversation() {
-    if (!newAgentId) { setStatusMessage("Selecione CLICK ou GIGA CLICK para iniciar a conversa."); return; }
+    if (!newAgentId) { setStatusMessage("Selecione NIO FIBRA ou VIVO FIBRA para iniciar a conversa."); return; }
     const response = await fetch("/api/inbox/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -665,9 +667,9 @@ export function ConversationCenter() {
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {currentUser?.role === "ADMIN" && !currentUser.permissions["leads.onlyGiga"] && !currentUser.permissions["leads.onlyClick"] ? (
               <select aria-label="Chatbot exibido" className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700" value={agentScope} onChange={(event) => setAgentScope(event.target.value as AgentScope)}>
-                <option value="both">CLICK e GIGA CLICK</option>
-                <option value="click">CLICK</option>
-                <option value="giga">GIGA CLICK</option>
+                <option value="both">NIO FIBRA e VIVO FIBRA</option>
+                <option value="click">NIO FIBRA</option>
+                <option value="giga">VIVO FIBRA</option>
               </select>
             ) : null}
             <span className={`h-2.5 w-2.5 rounded-full ${isRealtimeConnected ? "bg-emerald-500" : "bg-orange-500"}`} />
@@ -814,7 +816,7 @@ export function ConversationCenter() {
                   <div>
                     <div className="flex items-center gap-2"><Button type="button" variant="ghost" size="icon" className="lg:hidden" aria-label="Voltar às conversas" onClick={() => setMobileChatOpen(false)}><ArrowLeft className="h-4 w-4" /></Button><span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">{(detail.lead?.name ?? detail.contactName ?? detail.phone).slice(0, 2).toUpperCase()}</span><CardTitle>{detail.lead?.name ?? detail.contactName ?? detail.phone}</CardTitle></div>
                     <CardDescription>
-                      {detail.phone} • Etapa atual: {detail.state} • {detail.agent?.name ?? "CLICK"}
+                      {detail.phone} • Etapa atual: {detail.state} • {detail.agent?.name ?? "Lily"}
                     </CardDescription>
                   </div>
                   <details className="relative">
@@ -968,7 +970,7 @@ export function ConversationCenter() {
 
                 <div className="mt-auto shrink-0 space-y-2 border-t bg-card px-3 py-3">
                   <div className="flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-                    <span>{detail.botActive ? `${detail.agent?.name ?? "CLICK"} pode responder nesta conversa.` : "Somente operador responde nesta conversa."}</span>
+                    <span>{detail.botActive ? `${detail.agent?.name ?? "Lily"} pode responder nesta conversa.` : "Somente operador responde nesta conversa."}</span>
                     <span className="hidden sm:inline">•</span>
                     <span className="hidden sm:inline">{currentUser?.role === "ADMIN" ? "Administradores visualizam todas as conversas." : "Você visualiza apenas as conversas atribuídas a você."}</span>
                   </div>
@@ -1004,7 +1006,7 @@ export function ConversationCenter() {
       {isCreateOpen ? (
         <Modal title="Novo número manual" onClose={() => setIsCreateOpen(false)}>
           <div className="space-y-4">
-            <label className="block space-y-2 text-sm">WhatsApp de envio<select aria-label="WhatsApp da nova conversa" className="h-10 w-full rounded-md border bg-background px-3" value={newAgentId} onChange={event=>setNewAgentId(event.target.value)}><option value="">Selecione a instância</option>{agents.map(agent=><option key={agent.id} value={agent.id}>{agent.instanceName}</option>)}</select></label>
+            <label className="block space-y-2 text-sm">WhatsApp de envio<select aria-label="WhatsApp da nova conversa" className="h-10 w-full rounded-md border bg-background px-3" value={newAgentId} onChange={event=>setNewAgentId(event.target.value)}><option value="">Selecione a instância</option>{agents.map(agent=><option key={agent.id} value={agent.id}>{whatsappAgentLabel(agent.instanceName)}</option>)}</select></label>
             <Input placeholder="Nome do contato" value={createForm.leadName} onChange={(event) => setCreateForm((current) => ({ ...current, leadName: event.target.value }))} />
             <Input placeholder="WhatsApp com DDI e DDD" value={createForm.phone} onChange={(event) => setCreateForm((current) => ({ ...current, phone: event.target.value }))} />
             <select className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={createForm.ownerUserId} onChange={(event) => setCreateForm((current) => ({ ...current, ownerUserId: event.target.value }))}>

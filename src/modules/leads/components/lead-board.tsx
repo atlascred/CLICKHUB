@@ -342,9 +342,9 @@ export function LeadBoard() {
           </select>
           {currentUser?.role === "ADMIN" && !currentUser.permissions["leads.onlyGiga"] && !currentUser.permissions["leads.onlyClick"] ? (
             <select aria-label="Chatbot exibido" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={agentScope} onChange={(event) => setAgentScope(event.target.value as AgentScope)}>
-              <option value="both">CLICK e GIGA CLICK</option>
-              <option value="click">CLICK</option>
-              <option value="giga">GIGA CLICK</option>
+              <option value="both">NIO FIBRA e VIVO FIBRA</option>
+              <option value="click">NIO FIBRA</option>
+              <option value="giga">VIVO FIBRA</option>
             </select>
           ) : null}
           <div className="flex rounded-md border bg-background p-1">

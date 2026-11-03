@@ -1,5 +1,7 @@
 "use client";
 
+import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
+
 import { FormEvent, useState } from "react";
 import { FileUp, MapPin, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -111,7 +113,7 @@ export function CepPanel() {
 
   return (
     <div className="space-y-4">
-      <label className="flex flex-wrap items-center gap-3 text-sm font-medium">Base de cobertura<select aria-label="Base de cobertura do agente" className="h-10 rounded-md border bg-background px-3" value={agentId} onChange={event=>{setAgentId(event.target.value);setResult(null);setMessage("");}}><option value="">Base geral / CLICK</option>{(agents.data ?? []).map(agent=><option key={agent.id} value={agent.id}>{agent.instanceName}</option>)}</select></label>
+      <label className="flex flex-wrap items-center gap-3 text-sm font-medium">Base de cobertura<select aria-label="Base de cobertura do agente" className="h-10 rounded-md border bg-background px-3" value={agentId} onChange={event=>{setAgentId(event.target.value);setResult(null);setMessage("");}}><option value="">Base geral / NIO FIBRA</option>{(agents.data ?? []).map(agent=><option key={agent.id} value={agent.id}>{whatsappAgentLabel(agent.instanceName)}</option>)}</select></label>
       {overview.data?.restricted ? <p className="text-sm text-muted-foreground">Esta base é própria do agente selecionado e foi carregada pelas planilhas de cobertura.</p> : null}
       {isAdmin ? <div className="grid gap-3 sm:grid-cols-3">
         <Metric label="CEPs cadastrados" value={String(overview.data?.total ?? 0)} />

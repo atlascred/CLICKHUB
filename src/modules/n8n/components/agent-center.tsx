@@ -1,5 +1,7 @@
 "use client";
 
+import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
+
 import { FormEvent, ReactNode, useMemo, useState, useEffect } from "react";
 import {
   Bot, BrainCircuit, Check, ChevronRight, CircleDollarSign, GripVertical,
@@ -111,7 +113,7 @@ export function AgentCenter() {
     </div>}
 
     {tab === "plans" && <label className="block text-sm">Planos do agente <select aria-label="Agente dos planos" className="ml-2 rounded-md border bg-background p-2" value={selectedAgentId} onChange={e => { setSelectedAgentId(e.target.value); setModal(null); setEditingPlan(null); }}>
-      {(agents.data ?? []).map(a => <option key={a.id} value={a.id}>{a.zapiInstanceId || a.name}</option>)}
+      {(agents.data ?? []).map(a => <option key={a.id} value={a.id}>{a.zapiInstanceId ? whatsappAgentLabel(a.zapiInstanceId) : a.name}</option>)}
     </select></label>}
     {tab === "plans" && <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {filteredPlans.map((plan) => <PlanCard key={plan.id} plan={plan}
@@ -136,7 +138,7 @@ function AgentCard({ agent, onEdit, onDelete }: { agent: AgentItem; onEdit: () =
       <div className="flex items-start justify-between gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-md bg-primary/15"><Bot className="h-6 w-6 text-primary" /></div>
         <span className={`rounded-full px-2 py-1 text-xs ${agent.active ? "bg-emerald-100 text-emerald-700" : "bg-muted text-muted-foreground"}`}>{agent.active ? "Ativo" : "Inativo"}</span></div>
       <h3 className="mt-4 font-semibold">{agent.name}</h3><p className="mt-1 line-clamp-2 min-h-10 text-sm text-muted-foreground">{agent.personality}</p>
-      <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>{agent.gender === "FEMALE" ? "Feminino" : "Masculino"}</span><span>•</span><span>{agent.plans.length} planos</span><span>•</span><span>{agent.zapiInstanceId || "WhatsApp não vinculado"}</span></div>
+      <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>{agent.gender === "FEMALE" ? "Feminino" : "Masculino"}</span><span>•</span><span>{agent.plans.length} planos</span><span>•</span><span>{whatsappAgentLabel(agent.zapiInstanceId)}</span></div>
     </button>
     <div className="flex justify-end gap-2 border-t px-4 py-3"><Button size="sm" variant="ghost" onClick={onEdit}><Pencil className="h-4 w-4" />Editar</Button><Button size="icon" variant="ghost" aria-label="Excluir agente" onClick={onDelete}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>
   </CardContent></Card>;
@@ -168,7 +170,7 @@ function FlowEditor({ agents, onSave }: { agents: AgentItem[]; onSave: (agent: A
   const setSteps = (next: FlowStep[]) => setDrafts((value) => ({ ...value, [selected.id]: next }));
   function drop(index: number) { if (dragIndex === null || dragIndex === index) return; const next = [...steps]; const [item] = next.splice(dragIndex, 1); next.splice(index, 0, item); setSteps(next); setDragIndex(null); }
   return <div className="space-y-4">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Fluxo de mensagens</h2><p className="text-sm text-muted-foreground">Arraste os blocos para alterar a ordem de execução.</p></div><div className="flex gap-2"><select className="h-10 rounded-md border bg-background px-3 text-sm" value={selected.id} onChange={(e) => setAgentId(e.target.value)}>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select><Button variant="outline" onClick={() => setEditing({ id: crypto.randomUUID(), state: `CUSTOM_${Date.now()}`, title: "Nova mensagem", message: "" })}><Plus className="h-4 w-4" />Mensagem</Button><Button onClick={() => onSave(selected, steps)}><Save className="h-4 w-4" />Salvar fluxo</Button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Fluxo de mensagens</h2><p className="text-sm text-muted-foreground">Arraste os blocos para alterar a ordem de execução.</p></div><div className="flex gap-2"><select className="h-10 rounded-md border bg-background px-3 text-sm" value={selected.id} onChange={(e) => setAgentId(e.target.value)}>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {whatsappAgentLabel(agent.zapiInstanceId)}</option>)}</select><Button variant="outline" onClick={() => setEditing({ id: crypto.randomUUID(), state: `CUSTOM_${Date.now()}`, title: "Nova mensagem", message: "" })}><Plus className="h-4 w-4" />Mensagem</Button><Button onClick={() => onSave(selected, steps)}><Save className="h-4 w-4" />Salvar fluxo</Button></div></div>
     <div className="min-h-[510px] overflow-x-auto rounded-2xl border bg-slate-100 dark:bg-slate-950 p-8"><div className="flex min-w-max items-center py-28">
       {steps.map((step, index) => <div key={step.id} className="flex items-center" onDragOver={(e) => e.preventDefault()} onDrop={() => drop(index)}>
         {index > 0 && <div className="relative h-0.5 w-20 bg-cyan-500"><span className="absolute -right-1 -top-1.5 h-3 w-3 rounded-full border-2 border-cyan-500 bg-card" /></div>}

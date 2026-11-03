@@ -1,5 +1,7 @@
 "use client";
 
+import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
+
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Download, FileText, Handshake, MessageCircle, Phone, Plus, RefreshCw, Send, Tag, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -550,7 +552,7 @@ export function ConversationsPanel() {
             <div>
               <CardTitle>Conversas</CardTitle>
               <select aria-label="Agente WhatsApp" className="mt-2 max-w-full rounded-md border bg-background px-2 py-1 text-sm" value={selectedAgentId} disabled={sending || submittingConversation} onChange={e => setSelectedAgentId(e.target.value)}>
-                {whatsappAgents.map(agent => <option key={agent.id} value={agent.id}>{agent.instanceName || agent.name}</option>)}
+                {whatsappAgents.map(agent => <option key={agent.id} value={agent.id}>{agent.instanceName ? whatsappAgentLabel(agent.instanceName) : agent.name}</option>)}
               </select>
               <p className="mt-1 text-sm text-muted-foreground">
                 {refreshing && !loading ? "Atualizando em tempo real..." : "Mensagens em tempo real"}

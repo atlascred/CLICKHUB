@@ -12,7 +12,7 @@ export async function resolveSelectedAgent(agentId?: string) {
     return agent;
   }
   const agents = await prisma.agent.findMany({ where: { active: true, deletedAt: null }, take: 2 });
-  if (agents.length !== 1 || !agents[0].zapiInstanceId) throw new Error("Selecione o agente CLICK ou GIGA CLICK antes de enviar.");
+  if (agents.length !== 1 || !agents[0].zapiInstanceId) throw new Error("Selecione o agente NIO FIBRA ou VIVO FIBRA antes de enviar.");
   resolveEvolutionInstance(agents[0].zapiInstanceId);
   return agents[0];
 }
