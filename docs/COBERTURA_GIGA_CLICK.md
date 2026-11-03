@@ -32,3 +32,15 @@ O painel CEPs permite escolher a base por agente. A base exclusiva pode ser cons
 Backups em `.backups/coverage-20261103/`. A ativação modifica somente `rules.coveragePolicy` e a orientação textual `rules.cobertura` do agente confirmado pelo número e instância. Personalidade, demais regras, planos, preços, JSON de fluxo, chaves, tempos e demais agentes são preservados.
 
 Há testes para CEP presente/ausente, zeros iniciais, isolamento, abertura/lotes, correção, confirmação antiga e falhas de banco. A publicação, a conferência integral dos dados e a política são verificadas antes da mensagem final autorizada para o WhatsApp do proprietário.
+
+## Resultado da extração de 03/11/2026
+
+- 147 arquivos XLSX e todas as respectivas abas lidas.
+- 18.398.094 linhas de dados: 18.397.249 com CEP válido e 845 sem CEP válido; 146 linhas vazias adicionais.
+- 466.884 CEPs únicos; 17.930.365 ocorrências repetidas consolidadas.
+- 170 CEPs com divergência de cidade/UF: os campos conflitantes ficam vazios, mantendo o CEP na base.
+- Conferência independente com o leitor `xlsx` em `SP_71.xlsx` e `AP.xlsx`: todas as 98.838 linhas válidas reconciliadas e todos os CEPs presentes na união.
+- SHA-256 do conjunto de arquivos: `12e214a1693e439e999786c3d2d449c923df3c2d1fc393d46ea76839f152bbaf`.
+- 147 testes automatizados aprovados, tipagem e build aprovados; interface verificada em desktop e celular.
+
+Amostras de linhas rejeitadas foram relidas: campo CEP vazio, seis dígitos (`620000`) ou nove dígitos (`229148090`, `291400001`). Esses valores não são corrigidos por suposição.
