@@ -134,7 +134,7 @@ export class ChatbotEngineService {
 
     for (const item of input.batchMessages ?? []) {
       if (item.providerId !== input.providerId) {
-        await this.chatbotRepository.claimInboundMessage({ conversationId: conversation.id, ...item });
+        await this.chatbotRepository.claimInboundMessage({ conversationId: conversation.id, providerId: item.providerId, body: item.body, rawPayload: item.rawPayload });
       }
     }
     if (conversation.state === "FINISHED") {

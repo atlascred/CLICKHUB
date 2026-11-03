@@ -644,3 +644,14 @@ test('106 — correção de endereço e confirmação antiga revalidam cobertura
 test('107 — falha na consulta não é tratada como ausência de cobertura',async()=>{
  const s=scopedCoverageSimulator();(s.engine as any).cepRepository={findByCep:async()=>{throw new Error('Coverage database unavailable');}};await assert.rejects(s.say('01139000'),/Coverage database unavailable/);assert.equal(s.sends.length,0);assert.equal(s.leads.length,0);assert.equal(s.conversation.state,'ASK_CEP');
 });
+
+test('108 — recebimento de lote com extração de mídia grava somente campos da mensagem',async()=>{
+ let created:any,updated=0;
+ const repo=new ChatbotRepository({chatMessage:{create:async(q:any)=>{created=q.data;}},chatConversation:{update:async()=>{updated++;}}} as any);
+ await repo.claimInboundMessage({conversationId:'test',body:'[Documento recebido]',providerId:'media-queued',rawPayload:{kind:'documento'},extractedData:{cep:'01139000'}} as any);
+ assert.deepEqual(created,{conversationId:'test',body:'[Documento recebido]',providerId:'media-queued',rawPayload:{kind:'documento'},direction:'inbound'});assert.equal(updated,1);
+ const s=simulator('lote com mídia já enfileirada',{state:'ASK_CEP'});const original=s.repo.claimInboundMessage;
+ s.repo.claimInboundMessage=async(m:any)=>{assert.equal(Object.hasOwn(m,'extractedData'),false);return original(m);};
+ const batch=[{providerId:'media-first',body:'01001000',extractedData:{}},{providerId:'media-second',body:'123',extractedData:{streetNumber:'123'}}];
+ await s.say('01001000\n123','media-first',{batchMessages:batch});assert.equal(s.conversation.state,'ASK_COMPLEMENT');assert.equal(s.sends.length,1);
+});

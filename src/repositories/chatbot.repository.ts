@@ -221,7 +221,10 @@ export class ChatbotRepository {
     try {
       await this.db.chatMessage.create({
         data: {
-          ...input,
+          conversationId: input.conversationId,
+          body: input.body,
+          providerId: input.providerId,
+          rawPayload: input.rawPayload,
           direction: "inbound",
         },
       });
