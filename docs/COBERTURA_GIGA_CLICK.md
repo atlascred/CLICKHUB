@@ -44,3 +44,13 @@ Há testes para CEP presente/ausente, zeros iniciais, isolamento, abertura/lotes
 - 147 testes automatizados aprovados, tipagem e build aprovados; interface verificada em desktop e celular.
 
 Amostras de linhas rejeitadas foram relidas: campo CEP vazio, seis dígitos (`620000`) ou nove dígitos (`229148090`, `291400001`). Esses valores não são corrigidos por suposição.
+
+## Ativação e verificação em produção
+
+Base integralmente importada e ativada no GIGA CLICK. Quantidade e SHA-256 da lista ordenada de CEPs gravados conferiram com a extração: `945824139349d80e8d826c87dcbb91a36349eb8dec72a5d6480dd57eef970068`.
+
+A publicação confirmou quatro consultas autenticadas com HTTP 200: resumo do GIGA (466.884), resumo do CLICK (483.388), CEP presente e CEP ausente. O motor com agente e base reais avançou para `ASK_STREET_NUMBER` no CEP presente e retornou `FINISHED_UNAVAILABLE` no ausente, inclusive para confirmação de conversa anterior à ativação. Nenhum lead ou mensagem de cliente foi criado nesses testes.
+
+Comparação com os backups confirmou CLICK integralmente inalterado e GIGA alterado apenas na política/orientação de cobertura e data de atualização. Os 172 arquivos de referência da Alfa também mantiveram seus hashes originais.
+
+Relatórios locais: `.test-output/coverage/import-result.json` e `.test-output/coverage/production-check.json`. Publicação: https://clickhub-peach.vercel.app.
