@@ -84,6 +84,7 @@ export class InboxRepository {
             id: true,
             direction: true,
             body: true,
+            rawPayload: true,
             createdAt: true,
           },
           orderBy: { createdAt: "desc" },
@@ -141,7 +142,7 @@ export class InboxRepository {
   }
 }
 
-function buildConversationAccessWhere(user?: LeadAccessUser, agentScope?: string): Prisma.ChatConversationWhereInput {
+export function buildConversationAccessWhere(user?: LeadAccessUser, agentScope?: string): Prisma.ChatConversationWhereInput {
   return { deletedAt: null, ...conversationAgentWhere(user, agentScope),
     ...(user?.role === "EMPLOYEE" ? { ownerUserId: user.id } : {}) };
 }

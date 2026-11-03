@@ -1,3 +1,4 @@
+import { attachmentForMessage } from "@/lib/whatsapp-media";
 import { InboxRepository } from "@/repositories/inbox.repository";
 import type { LeadAccessUser } from "@/lib/lead-source-access";
 
@@ -144,6 +145,7 @@ export class InboxService {
         id: message.id,
         direction: message.direction,
         body: message.body,
+        attachment: attachmentForMessage(message.id, message.rawPayload),
         createdAt: message.createdAt.toISOString(),
       }));
 

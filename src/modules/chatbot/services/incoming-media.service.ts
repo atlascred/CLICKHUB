@@ -2,10 +2,10 @@ import type { ExtractedCustomerData } from "@/services/openai/openai.service";
 
 export interface MediaIntelligence {
   transcribeAudio(input: { url: string; mimeType: string }): Promise<string>;
-  extractCustomerData(input: { url: string; mimeType: string }): Promise<ExtractedCustomerData>;
+  extractCustomerData(input: { url: string; mimeType: string; fileName?: string }): Promise<ExtractedCustomerData>;
 }
 
-export async function interpretIncomingMedia(ai: MediaIntelligence, input: { kind: string; message: string; mediaUrl?: string; mimeType?: string }) {
+export async function interpretIncomingMedia(ai: MediaIntelligence, input: { kind: string; message: string; mediaUrl?: string; mimeType?: string; fileName?: string }) {
   if (input.kind === "audio") {
     try {
       const text = input.mediaUrl ? await ai.transcribeAudio({ url: input.mediaUrl, mimeType: input.mimeType || "audio/ogg" }) : "";
@@ -14,7 +14,7 @@ export async function interpretIncomingMedia(ai: MediaIntelligence, input: { kin
   }
   if (["imagem", "documento"].includes(input.kind)) {
     try {
-      const extractedData = input.mediaUrl ? await ai.extractCustomerData({ url: input.mediaUrl, mimeType: input.mimeType || (input.kind === "imagem" ? "image/jpeg" : "application/pdf") }) : {};
+      const extractedData = input.mediaUrl ? await ai.extractCustomerData({ url: input.mediaUrl, mimeType: input.mimeType || (input.kind === "imagem" ? "image/jpeg" : "application/pdf"), fileName: input.fileName }) : {};
       return { message: input.message || "[Documento recebido]", extractedData };
     } catch { return { message: input.message || "[Documento ilegível]", extractedData: {} }; }
   }

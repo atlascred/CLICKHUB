@@ -12,6 +12,9 @@ import { resolveEvolutionPhone, sendEvolutionAudioMessage, sendEvolutionMediaMes
 import { checkMetaWhatsAppNumber, isMetaWhatsAppEnabled, sendMetaMediaMessage, sendMetaTextMessage } from "@/services/meta-whatsapp";
 import { normalizePhone } from "@/services/validators";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 type SendBody = {
   to?: string;
   agentId?: string;
@@ -96,7 +99,7 @@ export async function POST(request: Request) {
           provider: usingMeta ? "meta" : "evolution",
           instanceName: agent?.zapiInstanceId,
           kind: messageKind,
-          media: body.media ? { source: body.media, kind: body.kind, mimeType: body.mimeType, fileName: body.fileName } : undefined,
+          media: body.media || body.audio ? { source: body.audio || body.media, kind: messageKind, mimeType: body.mimeType, fileName: body.fileName || (body.audio ? "audio" : undefined) } : undefined,
           result: normalizeJson(result),
         } as Prisma.InputJsonValue,
       },

@@ -1,5 +1,7 @@
 "use client";
 
+import { ChatMessageMedia } from "./chat-message-media";
+import type { MessageAttachment } from "@/lib/whatsapp-media";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, MessageCircleMore, Filter, Mic, Paintbrush, Paperclip, Plus, Search, Send, Square, Trash2, UserCheck, Undo2, X } from "lucide-react";
@@ -57,7 +59,7 @@ type ConversationDetail = {
   tags: ConversationTag[];
   memory: Record<string, unknown>;
   botActive: boolean;
-  messages: Array<{ id: string; direction: string; body: string; createdAt: string }>;
+  messages: Array<{ id: string; direction: string; body: string; createdAt: string; attachment?: MessageAttachment | null }>;
   messagesPagination?: {
     total: number;
     offset: number;
@@ -542,6 +544,8 @@ export function ConversationCenter() {
 
   async function sendMessage() {
     if (!detail || isSending || (!message.trim() && !selectedFile)) return;
+    if (selectedFile && selectedFile.size > 3 * 1024 * 1024) { setStatusMessage("Use um arquivo de até 3 MB."); return; }
+    if (selectedFile && !selectedFile.size) { setStatusMessage("O arquivo está vazio. Grave ou selecione novamente."); return; }
     setIsSending(true);
     try {
       const response = selectedFile ? await sendMedia() : await fetch("/api/inbox", {
@@ -550,7 +554,9 @@ export function ConversationCenter() {
       });
       const result=await response.json();
       if (!response.ok || result.status !== "success") throw new Error(result.message || "Falha no envio.");
-      setStatusMessage(result.message); setMessage(""); clearSelectedMedia();
+      setStatusMessage(selectedFile?.type.startsWith("audio/") && message.trim() ? "Áudio enviado. O texto foi mantido para você enviar separadamente." : result.message);
+      if (!selectedFile?.type.startsWith("audio/")) setMessage("");
+      clearSelectedMedia();
       await loadConversations({ preferredId: detail.id, reset: true, limitOverride: Math.max(payload?.conversations.items.length ?? PAGE_SIZE, PAGE_SIZE) });
     } catch(error) { setStatusMessage(error instanceof Error ? error.message : "Falha no envio. Sua mensagem foi mantida."); }
     finally { setIsSending(false); }
@@ -593,31 +599,28 @@ export function ConversationCenter() {
 
   async function startRecording() {
     if (isRecording) return;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const recorder = new MediaRecorder(stream);
-
-    mediaStreamRef.current = stream;
-    mediaRecorderRef.current = recorder;
-    audioChunksRef.current = [];
-
-    recorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size > 0) {
-        audioChunksRef.current.push(event.data);
-      }
-    });
-
-    recorder.addEventListener("stop", () => {
-      const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-      const file = new File([blob], `audio-${Date.now()}.webm`, { type: recorder.mimeType || "audio/webm" });
-      setSelectedFile(file);
-      if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl);
-      setAudioPreviewUrl(URL.createObjectURL(blob));
-      stream.getTracks().forEach((track) => track.stop());
-      setIsRecording(false);
-    });
-
-    recorder.start();
-    setIsRecording(true);
+    let stream: MediaStream | undefined;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") throw new Error("Seu navegador não permite gravar áudio. Anexe um arquivo de áudio ou use um navegador compatível.");
+      stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      const mime = ["audio/ogg;codecs=opus","audio/webm;codecs=opus","audio/mp4","audio/webm"].find(type=>MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mime ? {mimeType:mime} : undefined);
+      mediaStreamRef.current=stream; mediaRecorderRef.current=recorder; audioChunksRef.current=[];
+      recorder.addEventListener("dataavailable",event=>{if(event.data.size>0)audioChunksRef.current.push(event.data);});
+      recorder.addEventListener("stop",()=>{
+        const type=recorder.mimeType||mime||"audio/webm";
+        const blob=new Blob(audioChunksRef.current,{type});
+        const extension=type.includes("mp4")?"m4a":type.includes("ogg")?"ogg":"webm";
+        if(blob.size) {
+          setSelectedFile(new File([blob],`audio-${Date.now()}.${extension}`,{type}));
+          if(audioPreviewUrl)URL.revokeObjectURL(audioPreviewUrl);
+          setAudioPreviewUrl(URL.createObjectURL(blob));
+        } else setStatusMessage("A gravação ficou vazia. Tente gravar novamente.");
+        stream?.getTracks().forEach(track=>track.stop());setIsRecording(false);
+      });
+      recorder.addEventListener("error",()=>{stream?.getTracks().forEach(track=>track.stop());setIsRecording(false);setStatusMessage("Não foi possível gravar. Tente novamente ou anexe um áudio.");});
+      recorder.start();setIsRecording(true);
+    }catch(error){stream?.getTracks().forEach(track=>track.stop());setIsRecording(false);setStatusMessage(error instanceof Error?error.message:"Não foi possível acessar o microfone.");}
   }
 
   function stopRecording() {
@@ -919,7 +922,8 @@ export function ConversationCenter() {
                   {detail.messages.map((messageItem) => (
                     <div key={messageItem.id} className={`flex ${messageItem.direction === "inbound" ? "justify-start" : "justify-end"}`}>
                       <div className={`max-w-[88%] rounded-lg px-3 py-2 text-sm leading-relaxed shadow-sm sm:max-w-[78%] ${messageItem.direction === "inbound" ? "rounded-tl-none bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-100" : "rounded-tr-none bg-[#d9fdd3] text-slate-900 dark:bg-[#164b42] dark:text-slate-100"}`}>
-                        <p className="whitespace-pre-wrap break-words">{messageItem.body}</p>
+                        {messageItem.attachment ? <ChatMessageMedia attachment={messageItem.attachment} /> : null}
+                        {messageItem.body ? <p className="whitespace-pre-wrap break-words">{messageItem.body}</p> : null}
                         <p className="mt-1 text-right text-[10px] text-slate-500 dark:text-slate-300">
                           {formatTime(messageItem.createdAt)}
                         </p>
@@ -980,7 +984,7 @@ export function ConversationCenter() {
                     <Textarea
                       value={message}
                       onChange={(event) => setMessage(event.target.value)}
-                      placeholder={selectedFile ? "Digite uma legenda opcional..." : "Digite sua mensagem..."}
+                      placeholder={selectedFile ? selectedFile.type.startsWith("audio/") ? "Texto para enviar separadamente..." : "Digite uma legenda opcional..." : "Digite sua mensagem..."}
                       rows={1}
                       aria-label="Mensagem"
                       className="min-h-11 max-h-32 min-w-0 flex-1 resize-y rounded-xl bg-background py-3"

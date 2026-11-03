@@ -1,3 +1,4 @@
+import { describeMedia, unwrapMediaMessage } from "@/lib/whatsapp-media";
 import "server-only";
 import { currentEvolutionInstance } from "@/services/evolution-context";
 
@@ -260,35 +261,24 @@ export async function setEvolutionChatPresence(input: {
 
 export async function sendEvolutionAudioMessage(input: SendEvolutionAudioInput) {
   const config = getEvolutionConfig();
-  const normalizedAudio = normalizeOwnedMedia(input.audio);
-  const mimeType = input.mimeType?.trim() || "audio/webm";
-  const fileName = resolveAudioFileName(mimeType);
-  const primaryPayload = {
-    number: normalizePhone(input.to),
-    mediatype: "audio",
-    media: normalizedAudio,
-    fileName,
-    mimetype: mimeType,
-  };
-
-  const primary = await postEvolutionJson(config.sendMediaUrl, config.apiKey, primaryPayload);
+  const audio = normalizeOwnedMedia(input.audio);
+  // Evolution 2.3.7 converts browser WebM/MP4 to WhatsApp Ogg/Opus here.
+  const primary = await postEvolutionJson(config.sendAudioUrl, config.apiKey, {
+    number: normalizePhone(input.to), audio, encoding: true,
+  });
   if (primary.ok) return primary.result;
-
+  // Never retry a timeout/5xx: the provider may already have accepted the send.
+  if (primary.status !== 415) throw new Error(formatEvolutionError(primary.result, "A Evolution API recusou o envio do áudio."));
   const form = new FormData();
   form.set("number", normalizePhone(input.to));
-  form.set("mediatype", "audio");
-  form.set("fileName", fileName);
-  const mediaValue = createOwnedMediaFormValue(normalizedAudio, mimeType, fileName);
-  if (mediaValue.kind === "url") {
-    form.set("media", mediaValue.value);
-  } else {
-    form.set("media", mediaValue.value, mediaValue.fileName);
-  }
-
-  const fallback = await postEvolutionForm(config.sendMediaUrl, config.apiKey, form);
+  const mimeType = input.mimeType?.trim() || "audio/webm";
+  const fileName = resolveAudioFileName(mimeType);
+  const media = createOwnedMediaFormValue(audio, mimeType, fileName);
+  if (media.kind === "url") form.set("audio", media.value);
+  else form.set("file", media.value, fileName);
+  const fallback = await postEvolutionForm(config.sendAudioUrl, config.apiKey, form);
   if (fallback.ok) return fallback.result;
-
-  throw new Error(formatEvolutionError(fallback.result ?? primary.result, "A Evolution API recusou o envio do audio."));
+  throw new Error(formatEvolutionError(fallback.result, "A Evolution API recusou o envio do áudio."));
 }
 
 export async function sendEvolutionMediaMessage(input: SendEvolutionMediaInput) {
@@ -307,15 +297,18 @@ export async function sendEvolutionMediaMessage(input: SendEvolutionMediaInput) 
   const primary = await postEvolutionJson(config.sendMediaUrl, config.apiKey, primaryPayload);
   if (primary.ok) return primary.result;
 
+  if (primary.status !== 415) throw new Error(formatEvolutionError(primary.result, `A Evolution API recusou o envio de ${input.kind}.`));
   const form = new FormData();
   form.set("number", normalizePhone(input.to));
+  form.set("mediatype", String(primaryPayload.mediatype));
+  if (input.mimeType) form.set("mimetype", input.mimeType);
   if (input.caption?.trim()) form.set("caption", input.caption.trim());
   if (mediaFileName) form.set("fileName", mediaFileName);
   const mediaValue = createOwnedMediaFormValue(normalizedMedia, input.mimeType, mediaFileName);
   if (mediaValue.kind === "url") {
     form.set("media", mediaValue.value);
   } else {
-    form.set("media", mediaValue.value, mediaValue.fileName);
+    form.set("file", mediaValue.value, mediaValue.fileName);
   }
 
   const fallback = await postEvolutionForm(config.sendMediaUrl, config.apiKey, form);
@@ -333,11 +326,11 @@ async function postEvolutionJson(url: string, apiKey: string, payload: Record<st
     },
     body: JSON.stringify(payload),
     cache: "no-store",
-    signal: createEvolutionTimeoutSignal(),
+    signal: createEvolutionTimeoutSignal(45_000),
   });
 
   const result = await parseApiResponse(response);
-  return { ok: response.ok, result };
+  return { ok: response.ok, status: response.status, result };
 }
 
 async function postEvolutionForm(url: string, apiKey: string, form: FormData) {
@@ -346,17 +339,17 @@ async function postEvolutionForm(url: string, apiKey: string, form: FormData) {
     headers: { apikey: apiKey },
     body: form,
     cache: "no-store",
-    signal: createEvolutionTimeoutSignal(),
+    signal: createEvolutionTimeoutSignal(45_000),
   });
 
   const result = await parseApiResponse(response);
-  return { ok: response.ok, result };
+  return { ok: response.ok, status: response.status, result };
 }
 
 function normalizeOwnedMedia(value: string) {
   const normalized = value.trim();
-  const dataUrlMatch = normalized.match(/^data:([^;]+);base64,(.+)$/);
-  if (dataUrlMatch) return dataUrlMatch[2];
+  const dataUrlMatch = normalized.match(/^data:([^,]+);base64,([\s\S]+)$/);
+  if (dataUrlMatch) return dataUrlMatch[2].replace(/\s/g, "");
   return normalized;
 }
 
@@ -387,7 +380,13 @@ function resolveAudioFileName(mimeType: string) {
 }
 
 function formatEvolutionError(result: unknown, fallbackMessage: string) {
-  if (typeof result === "object" && result) return JSON.stringify(result);
+  if (typeof result === "object" && result) {
+    const payload = result as Record<string, unknown>;
+    const nested = payload.response && typeof payload.response === "object" ? payload.response as Record<string, unknown> : {};
+    const message = nested.message ?? payload.message;
+    if (typeof message === "string" && message.trim()) return message;
+    if (Array.isArray(message)) return message.filter(item => typeof item === "string").join("; ") || fallbackMessage;
+  }
   return fallbackMessage;
 }
 
@@ -548,9 +547,9 @@ function extractPresenceStatus(payload: Record<string, unknown>, data: Record<st
 function resolveMessageKind(data: Record<string, unknown>): "texto" | "imagem" | "audio" | "video" | "documento" {
   const messageType = String(data.messageType ?? "").toLowerCase();
   const message = resolveWebhookMessageObject(data);
-  if (message.imageMessage || messageType.includes("image")) return "imagem";
+  if (message.imageMessage || message.stickerMessage || messageType.includes("image")) return "imagem";
   if (message.audioMessage || messageType.includes("audio") || messageType.includes("ptt")) return "audio";
-  if (message.videoMessage || messageType.includes("video")) return "video";
+  if (message.videoMessage || message.ptvMessage || messageType.includes("video")) return "video";
   if (message.documentMessage || messageType.includes("document")) return "documento";
   return "texto";
 }
@@ -580,21 +579,13 @@ function extractMessageText(data: Record<string, unknown>) {
 }
 
 function extractMediaData(data: Record<string, unknown>, kind: string) {
-  const message = resolveWebhookMessageObject(data);
-  const nestedPayloads = [message, message.imageMessage, message.audioMessage, message.videoMessage, message.documentMessage, data]
-    .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object");
-
-  const mediaUrl = firstString(
-    nestedPayloads.flatMap((item) => [item.url, item.mediaUrl, item.imageUrl, item.audioUrl, item.videoUrl, item.documentUrl, item.directPath, item.base64, item.data]),
-  );
-  const mimeType = firstString(nestedPayloads.flatMap((item) => [item.mimetype, item.mimeType]));
-  const fileName = firstString(nestedPayloads.flatMap((item) => [item.fileName, item.filename, item.title, kind === "audio" ? "audio.ogg" : ""]));
-  return { mediaUrl, mimeType, fileName };
+  const media=describeMedia({raw:{data},kind});
+  return {mediaUrl:media?.source,mimeType:media?.mimeType,fileName:media?.fileName};
 }
 
 function resolveWebhookMessageObject(data: Record<string, unknown>) {
   const message = data.message ?? data.Message;
-  return message && typeof message === "object" ? (message as Record<string, unknown>) : {};
+  return unwrapMediaMessage(message);
 }
 
 function mapEvolutionMessageStatus(value: unknown): "enviado" | "entregue" | "lido" | "falha" {

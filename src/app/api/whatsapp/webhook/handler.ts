@@ -1,3 +1,6 @@
+import { mergeEvolutionStatus } from "@/repositories/message-status.repository";
+import { getOpenAiRuntimeConfig } from "@/lib/integration-config";
+import { downloadEvolutionMedia } from "@/services/evolution-media";
 import { withEvolutionInstance, scopedEvolutionId, webhookInstance, currentEvolutionInstance } from "@/services/evolution-context";
 import { ChatbotRepository } from "@/repositories/chatbot.repository";
 import { createHash } from "node:crypto";
@@ -64,17 +67,8 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
   if (isEvolutionStatusWebhook(payload)) {
     const updates = extractEvolutionStatusUpdates(payload);
     for (const update of updates) {
-      await prisma.chatMessage.updateMany({
-        where: { providerId: { in: [scopedEvolutionId(instanceName, update.messageId), update.messageId] }, conversation: { agentId: agent.id } },
-        data: {
-          rawPayload: {
-            provider: "evolution",
-            status: update.status,
-            rawLastStatus: redactCredentials(payload),
-          } as Prisma.InputJsonValue,
-          readAt: update.status === "lido" ? new Date() : undefined,
-        },
-      });
+      await mergeEvolutionStatus(prisma, { instanceName, agentId: agent.id, messageId: update.messageId,
+        status: update.status, raw: redactCredentials(payload) as Prisma.InputJsonValue });
     }
     return NextResponse.json(successResponse("Status processado.", { updates: updates.length }));
   }
@@ -100,15 +94,33 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
     }));
   }
 
-  if (await isBlockedConversation(parsed.phone, agent.id)) {
+  const conversationGuard = await getConversationGuard(parsed.phone, agent.id);
+  if (conversationGuard.blocked) {
     return NextResponse.json(successResponse("Contato bloqueado ignorado.", { ignored: true, blocked: true }));
   }
 
   if (!parsed.phone) return NextResponse.json(errorResponse("Contato inválido.", "INVALID_WEBHOOK"), { status: 422 });
   try {
-    const incoming = await interpretIncomingMedia(openAiService, parsed);
+    const rawPayload = redactCredentials({ provider: "evolution", instanceName, kind: parsed.kind, mediaUrl: parsed.mediaUrl, mimeType: parsed.mimeType, fileName: parsed.fileName, raw: parsed.raw });
+    let mediaInput = { ...parsed };
+    let intelligence = openAiService;
+    if (["audio", "imagem", "documento"].includes(parsed.kind)) {
+      const config = conversationGuard.automationEnabled ? await getOpenAiRuntimeConfig() : { apiKey: "", model: "gpt-4o-mini" };
+      intelligence = new OpenAiService(async () => config);
+      // Authorized by the owner: decrypt in the originating instance before AI processing.
+      // Without a key, keep the original attachment available in the panel and request text.
+      mediaInput.mediaUrl = undefined;
+      if (config.apiKey) {
+        try {
+          const downloaded = await downloadEvolutionMedia(rawPayload);
+          const mime = downloaded.mimeType.split(";")[0];
+          mediaInput = { ...parsed, mimeType: mime, fileName: downloaded.fileName,
+            mediaUrl: `data:${mime};base64,${downloaded.bytes.toString("base64")}` };
+        } catch { /* Never interpret encrypted/unavailable bytes as customer data. */ }
+      }
+    }
+    const incoming = await interpretIncomingMedia(intelligence, mediaInput);
     const providerId = scopedEvolutionId(instanceName, parsed.messageId || `event:${createHash("sha256").update(rawBody).digest("hex")}`);
-    const rawPayload = redactCredentials({ provider: "evolution", instanceName, kind: parsed.kind, mediaUrl: parsed.mediaUrl, mimeType: parsed.mimeType, raw: parsed.raw });
     const result = await batchService.accept(`evolution:${instanceName}:${parsed.phone}`, {
       providerId, body: incoming.message, extractedData: incoming.extractedData,
       rawPayload: rawPayload as Prisma.InputJsonValue,
@@ -248,17 +260,18 @@ async function upsertConversationMemory(phone: string, input: Record<string, unk
   `;
 }
 
-async function isBlockedConversation(phone: string, agentId?: string) {
+async function getConversationGuard(phone: string, agentId?: string) {
   const conversation = await prisma.chatConversation.findFirst({
     where: { phone, deletedAt: null, ...(agentId ? { agentId } : {}) },
     orderBy: { updatedAt: "desc" },
-    select: { memory: true, state: true },
+    select: { memory: true, state: true, ownerUserId: true },
   });
-  if (!conversation) return false;
+  if (!conversation) return {blocked:false,automationEnabled:true};
   const memory = conversation.memory && typeof conversation.memory === "object" && !Array.isArray(conversation.memory)
     ? conversation.memory as Record<string, unknown>
     : {};
-  return conversation.state === "BLOCKED" || memory.blocked === true;
+  const blocked = conversation.state === "BLOCKED" || memory.blocked === true;
+  return { blocked, automationEnabled: !blocked && !conversation.ownerUserId && memory.humanTakeover !== true && !["FINISHED", "FINISHED_UNAVAILABLE", "HUMAN_HANDOFF", "MANUAL"].includes(conversation.state) };
 }
 
 function defaultWebhookMessageLabel(kind: string) {
@@ -340,3 +353,5 @@ function redactCredentials(value: unknown): unknown {
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).filter(([key]) => !/apikey|token|secret|authorization|password/i.test(key)).map(([key, item]) => [key, redactCredentials(item)]));
   return value;
 }
+
+async function isBlockedConversation(phone: string, agentId?: string) { return (await getConversationGuard(phone, agentId)).blocked; }

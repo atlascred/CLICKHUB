@@ -60,13 +60,15 @@ export class OpenAiService {
     return response.output_text;
   }
 
-  async extractCustomerData(input: { url: string; mimeType: string }) {
+  async extractCustomerData(input: { url: string; mimeType: string; fileName?: string }) {
     const config = await this.configProvider();
     if (!config.apiKey) return {};
 
     const client = this.clientFactory({ apiKey: config.apiKey, timeout: 12_000, maxRetries: 0 });
-    const media = input.mimeType === "application/pdf"
-      ? { type: "input_file" as const, file_url: input.url }
+    const media = !input.mimeType.startsWith("image/")
+      ? input.url.startsWith("data:")
+        ? { type: "input_file" as const, file_data: input.url, filename: input.fileName || "documento.pdf" }
+        : { type: "input_file" as const, file_url: input.url }
       : { type: "input_image" as const, image_url: input.url, detail: "high" as const };
     const response = await client.responses.create({
       model: config.model,
@@ -118,7 +120,7 @@ export class OpenAiService {
 
 async function readAudioBytes(value: string) {
   const normalized = value.trim();
-  const dataUrlMatch = normalized.match(/^data:[^;]+;base64,(.+)$/);
+  const dataUrlMatch = normalized.match(/^data:[^,]+;base64,([\s\S]+)$/);
   if (dataUrlMatch) {
     return Uint8Array.from(Buffer.from(dataUrlMatch[1], "base64")).buffer;
   }
