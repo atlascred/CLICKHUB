@@ -1,8 +1,9 @@
 "use client";
 import { leadSourceLabel } from "@/modules/leads/types/lead-source";
+import { buildLeadCopyText, type LeadCopyKind } from "@/modules/leads/clipboard";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { CalendarClock, Check, Download, Eye, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { CalendarClock, Check, FileSearch, Download, Eye, FileUp, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -676,6 +677,7 @@ function TableView({
                   <td className="px-3 py-3 text-right">
                     <div className="flex justify-end gap-2">
                       <WhatsAppButton phone={lead.phone} />
+                      <LeadCopyButtons lead={lead} />
                       <Button
                         aria-label="Ver detalhes do lead"
                         size="sm"
@@ -784,14 +786,15 @@ function LeadCard({
         event.dataTransfer.effectAllowed = "move";
       }}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-[120px] flex-1">
           <p className="truncate font-medium">{lead.name}</p>
           <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-200">{leadSourceLabel(lead.source)}</span>
           <p className="text-muted-foreground">{lead.phone}</p>
         </div>
         <div className="flex shrink-0 gap-1">
           <WhatsAppButton phone={lead.phone} compact />
+          <LeadCopyButtons lead={lead} />
           <Button
             aria-label="Ver detalhes do lead"
             size="sm"
@@ -1216,6 +1219,37 @@ function EmptyState({ text }: { text: string }) {
   return (
     <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
       {text}
+    </div>
+  );
+}
+
+function LeadCopyButtons({ lead }: { lead: LeadListItem }) {
+  const [feedback, setFeedback] = useState<{ kind: LeadCopyKind; success: boolean } | null>(null);
+  useEffect(() => {
+    if (!feedback) return;
+    const timer = window.setTimeout(() => setFeedback(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
+
+  async function copy(kind: LeadCopyKind) {
+    try {
+      await navigator.clipboard.writeText(buildLeadCopyText(lead, kind));
+      setFeedback({ kind, success: true });
+    } catch {
+      setFeedback({ kind, success: false });
+    }
+  }
+
+  return (
+    <div className="relative flex gap-2">
+      <Button type="button" size="sm" className="w-9 shrink-0 bg-amber-400 px-0 text-amber-950 hover:bg-amber-500" aria-label="CONSULTA" title="CONSULTA: copiar dados para consulta" onClick={() => void copy("consulta")}>
+        {feedback?.kind === "consulta" && feedback.success ? <Check className="h-4 w-4" aria-hidden="true" /> : <FileSearch className="h-4 w-4" aria-hidden="true" />}
+      </Button>
+      <Button type="button" size="sm" className="w-9 shrink-0 bg-emerald-600 px-0 text-white hover:bg-emerald-700" aria-label="SUBIR VENDA" title="SUBIR VENDA: copiar dados da venda" onClick={() => void copy("venda")}>
+        {feedback?.kind === "venda" && feedback.success ? <Check className="h-4 w-4" aria-hidden="true" /> : <FileUp className="h-4 w-4" aria-hidden="true" />}
+      </Button>
+      {feedback?.success ? <span className="sr-only" role="status">{feedback.kind === "consulta" ? "Consulta copiada." : "Dados da venda copiados."}</span> : null}
+      {feedback && !feedback.success ? <span role="alert" className="absolute right-0 top-full z-10 mt-1 w-56 rounded-md border bg-background p-2 text-left text-xs text-destructive shadow">Não foi possível copiar. Verifique a permissão da área de transferência.</span> : null}
     </div>
   );
 }
