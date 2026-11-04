@@ -1,3 +1,4 @@
+import { saveEvolutionOutbound } from "@/repositories/evolution-outbound.repository";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -67,6 +68,11 @@ export class ChatbotRepository {
     providerId?: string;
     rawPayload?: Prisma.InputJsonValue;
   }) {
+    const raw: Record<string, unknown> = input.rawPayload && typeof input.rawPayload === "object" && !Array.isArray(input.rawPayload) ? input.rawPayload as Record<string, unknown> : {};
+    if (input.direction === "outbound" && raw.provider === "evolution" && typeof raw.instanceName === "string" && typeof raw.providerMessageId === "string") {
+      return saveEvolutionOutbound(this.db, { conversationId: input.conversationId, instanceName: raw.instanceName,
+        messageId: raw.providerMessageId, body: input.body, rawPayload: input.rawPayload! });
+    }
     const message = await this.db.chatMessage.create({
       data: input,
     });

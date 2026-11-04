@@ -1,3 +1,4 @@
+import { saveEvolutionOutbound } from "@/repositories/evolution-outbound.repository";
 import { withEvolutionInstance, scopedEvolutionId } from "@/services/evolution-context";
 import { resolveSelectedAgent } from "@/services/whatsapp-agent";
 import { Prisma } from "@prisma/client";
@@ -8,7 +9,7 @@ import { errorResponse, successResponse } from "@/lib/api-response";
 import { requireCurrentUser } from "@/lib/auth-context";
 import { prisma } from "@/lib/prisma";
 import { assertPermission } from "@/lib/permissions";
-import { resolveEvolutionPhone, sendEvolutionAudioMessage, sendEvolutionMediaMessage, sendEvolutionTextMessage } from "@/services/evolution";
+import { resolveEvolutionMessageId, resolveEvolutionPhone, sendEvolutionAudioMessage, sendEvolutionMediaMessage, sendEvolutionTextMessage } from "@/services/evolution";
 import { normalizePhone } from "@/services/validators";
 
 export const runtime = "nodejs";
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
           })
         : await sendEvolutionTextMessage({ to: destinationPhone, message: body.message as string, delayTypingSeconds: 2 });
 
-    const rawProviderId = resolveWhatsAppMessageId(result);
+    const rawProviderId = resolveEvolutionMessageId(result);
     const providerId = rawProviderId && agent?.zapiInstanceId ? scopedEvolutionId(agent.zapiInstanceId, rawProviderId) : rawProviderId;
     const conversation = await findOrCreateConversation({
       id: body.conversationId,
@@ -72,10 +73,9 @@ export async function POST(request: Request) {
 
     const messageKind = body.audio ? "audio" : body.media ? body.kind : "texto";
     const content = body.audio ? "Audio" : body.message || defaultMediaLabel(body.kind);
-    await prisma.chatMessage.create({
-      data: {
+    const messageData = {
         conversationId: conversation.id,
-        direction: "outbound",
+        direction: "outbound" as const,
         body: content,
         providerId,
         sentAt: new Date(),
@@ -86,14 +86,17 @@ export async function POST(request: Request) {
           media: body.media || body.audio ? { source: body.audio || body.media, kind: messageKind, mimeType: body.mimeType, fileName: body.fileName || (body.audio ? "audio" : undefined) } : undefined,
           result: normalizeJson(result),
         } as Prisma.InputJsonValue,
-      },
-    });
+      };
+    const savedMessage = rawProviderId && agent?.zapiInstanceId
+      ? await saveEvolutionOutbound(prisma, { instanceName: agent.zapiInstanceId, messageId: rawProviderId,
+          conversationId: conversation.id, body: content, rawPayload: messageData.rawPayload, sentAt: messageData.sentAt })
+      : await prisma.chatMessage.create({ data: messageData });
     await prisma.chatConversation.update({
       where: { id: conversation.id },
       data: { updatedAt: new Date() },
     });
 
-    return NextResponse.json(successResponse("Mensagem enviada.", { result, conversationId: conversation.id }));
+    return NextResponse.json(successResponse("Mensagem enviada.", { result, conversationId: savedMessage.conversationId }));
     };
     return agent?.zapiInstanceId ? await withEvolutionInstance(agent.zapiInstanceId, execute) : await execute();
   } catch (error) {
@@ -169,16 +172,6 @@ function defaultMediaLabel(kind?: "imagem" | "video" | "documento") {
   return "Mensagem";
 }
 
-function resolveWhatsAppMessageId(result: unknown) {
-  if (!result || typeof result !== "object") return undefined;
-  const payload = result as { key?: { id?: unknown }; message?: { key?: { id?: unknown } }; messages?: Array<{ id?: unknown }>; messageId?: unknown; id?: unknown };
-  if (typeof payload.messages?.[0]?.id === "string" && payload.messages[0].id.trim()) return payload.messages[0].id.trim();
-  if (typeof payload.key?.id === "string" && payload.key.id.trim()) return payload.key.id.trim();
-  if (typeof payload.message?.key?.id === "string" && payload.message.key.id.trim()) return payload.message.key.id.trim();
-  if (typeof payload.messageId === "string" && payload.messageId.trim()) return payload.messageId.trim();
-  if (typeof payload.id === "string" && payload.id.trim()) return payload.id.trim();
-  return undefined;
-}
 
 function normalizeJson(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;

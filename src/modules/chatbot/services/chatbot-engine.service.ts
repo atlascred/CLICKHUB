@@ -5,7 +5,8 @@ import { CepRepository } from "@/repositories/cep.repository";
 import { ChatbotRepository } from "@/repositories/chatbot.repository";
 import { OpenAiService } from "@/services/openai/openai.service";
 import type { ExtractedCustomerData } from "@/services/openai/openai.service";
-import { checkEvolutionWhatsAppNumber, sendEvolutionTextMessage } from "@/services/evolution";
+import { checkEvolutionWhatsAppNumber, resolveEvolutionMessageId, sendEvolutionTextMessage } from "@/services/evolution";
+import { currentEvolutionInstance, scopedEvolutionId } from "@/services/evolution-context";
 import { checkMetaWhatsAppNumber, markMetaMessageAsRead, sendMetaTextMessage } from "@/services/meta-whatsapp";
 import { ZapiService } from "@/services/zapi/zapi.service";
 import { onlyDigits } from "@/utils/mask";
@@ -209,6 +210,7 @@ export class ChatbotEngineService {
     if (latestMemory.humanTakeover || latestMemory.blocked || ["BLOCKED", "HUMAN_HANDOFF", "MANUAL"].includes(latestControl?.state ?? "")) {
       return { state: latestControl?.state ?? conversation.state, replied: false, delayMs: 0, humanTakeover: true };
     }
+    let evolutionResult: unknown;
     try {
       if (this.delivery) {
         await this.delivery.send({ phone, message: next.reply });
@@ -217,7 +219,7 @@ export class ChatbotEngineService {
         await sendMetaTextMessage({ to: destinationPhone, message: next.reply });
       } else if (provider === "evolution") {
         const destinationPhone = await this.resolveEvolutionDestinationPhone(phone);
-        await sendEvolutionTextMessage({ to: destinationPhone, message: next.reply, delayTypingSeconds: typingEnabled ? delaySeconds : undefined });
+        evolutionResult = await sendEvolutionTextMessage({ to: destinationPhone, message: next.reply, delayTypingSeconds: typingEnabled ? delaySeconds : undefined });
       } else {
         await this.zapiService.sendText({
           phone,
@@ -260,12 +262,16 @@ export class ChatbotEngineService {
       });
       throw error;
     }
+    const evolutionMessageId = provider === "evolution" ? resolveEvolutionMessageId(evolutionResult) : undefined;
+    const evolutionInstance = evolutionMessageId ? currentEvolutionInstance().instanceName : undefined;
     await this.chatbotRepository.saveMessage({
       conversationId: conversation.id,
       direction: "outbound",
       body: next.reply,
-      providerId: input.providerId ? `reply-to:${input.providerId}` : undefined,
-      rawPayload: { inReplyTo: input.batchMessages?.map(m => m.providerId) ?? (input.providerId ? [input.providerId] : []) },
+      providerId: evolutionMessageId && evolutionInstance ? scopedEvolutionId(evolutionInstance, evolutionMessageId)
+        : input.providerId ? `reply-to:${input.providerId}` : undefined,
+      rawPayload: { inReplyTo: input.batchMessages?.map(m => m.providerId) ?? (input.providerId ? [input.providerId] : []),
+        ...(evolutionMessageId ? { provider: "evolution", instanceName: evolutionInstance!, providerMessageId: evolutionMessageId } : {}) },
     });
     await this.chatbotRepository.updateConversation({
       id: conversation.id, state: next.state,

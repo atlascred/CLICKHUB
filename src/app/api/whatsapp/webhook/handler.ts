@@ -1,3 +1,4 @@
+import { saveEvolutionOutbound } from "@/repositories/evolution-outbound.repository";
 import { mergeEvolutionStatus } from "@/repositories/message-status.repository";
 import { getOpenAiRuntimeConfig } from "@/lib/integration-config";
 import { downloadEvolutionMedia } from "@/services/evolution-media";
@@ -42,7 +43,7 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
   const agent = await new ChatbotRepository().getAgentByInstance(instanceName, true);
   if (!agent) throw new Error("Agente da instância não encontrado.");
   const eventName = String(payload.event ?? "").toLowerCase().replace(/_/g, ".");
-  const isMessageEvent = eventName === "messages.upsert" || eventName.includes("messages.upsert");
+  const isMessageEvent = eventName === "messages.upsert" || eventName.includes("messages.upsert") || eventName === "send.message";
   const isStatusEvent = isEvolutionStatusWebhook(payload);
   const isPresenceEvent = eventName.includes("presence");
 
@@ -62,6 +63,12 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
     return NextResponse.json(successResponse("Status processado.", { updates: updates.length }));
   }
 
+  const eventData = payload.data && typeof payload.data === "object" ? payload.data as Record<string, unknown> : {};
+  const eventKey = eventData.key && typeof eventData.key === "object" ? eventData.key as Record<string, unknown> : {};
+  const remoteJid = String(eventKey.remoteJid ?? eventData.remoteJid ?? "");
+  if (/@(?:g\.us|broadcast|newsletter)$/.test(remoteJid)) {
+    return NextResponse.json(successResponse("Evento fora de conversa individual ignorado.", { ignored: true }));
+  }
   const parsed = parseEvolutionWebhookPayload(payload);
   if (parsed.event === "presence") {
     await upsertConversationMemory(parsed.phone, {
@@ -72,10 +79,6 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
     return NextResponse.json(successResponse("Presenca processada.", { phone: parsed.phone }));
   }
 
-  if (parsed.direction === "saida") {
-    return NextResponse.json(successResponse("Mensagem propria ignorada.", { ignored: true }));
-  }
-
   if (parsed.phone && parsed.phone === currentEvolutionInstance().number) {
     return NextResponse.json(successResponse("Mensagem do numero da instancia ignorada.", {
       ignored: true,
@@ -83,12 +86,32 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
     }));
   }
 
+  if (!parsed.phone) return NextResponse.json(errorResponse("Contato inválido.", "INVALID_WEBHOOK"), { status: 422 });
+  if (parsed.direction === "saida" || eventName === "send.message") {
+    // Outbound events are history only: never enqueue them as customer input or run AI.
+    if (!parsed.message && parsed.kind === "texto") {
+      return NextResponse.json(successResponse("Evento sem conteúdo ignorado.", { ignored: true }));
+    }
+    try {
+      const messageId = parsed.messageId || `event:${createHash("sha256").update(rawBody).digest("hex")}`;
+      const message = await saveEvolutionOutbound(prisma, {
+        instanceName, agentId: agent.id, phone: parsed.phone, messageId,
+        body: parsed.message || ({ imagem: "Imagem", audio: "Áudio", video: "Vídeo", documento: "Documento", texto: "Mensagem" }[parsed.kind]),
+        sentAt: parsed.sentAt,
+        rawPayload: redactCredentials({ provider: "evolution", instanceName, kind: parsed.kind,
+          mediaUrl: parsed.mediaUrl, mimeType: parsed.mimeType, fileName: parsed.fileName, raw: parsed.raw }) as Prisma.InputJsonValue,
+      });
+      return NextResponse.json(successResponse("Mensagem de saída sincronizada.", { conversationId: message.conversationId }));
+    } catch {
+      return NextResponse.json(errorResponse("Não foi possível sincronizar a mensagem de saída."), { status: 500 });
+    }
+  }
+
   const conversationGuard = await getConversationGuard(parsed.phone, agent.id);
   if (conversationGuard.blocked) {
     return NextResponse.json(successResponse("Contato bloqueado ignorado.", { ignored: true, blocked: true }));
   }
 
-  if (!parsed.phone) return NextResponse.json(errorResponse("Contato inválido.", "INVALID_WEBHOOK"), { status: 422 });
   try {
     const rawPayload = redactCredentials({ provider: "evolution", instanceName, kind: parsed.kind, mediaUrl: parsed.mediaUrl, mimeType: parsed.mimeType, fileName: parsed.fileName, raw: parsed.raw });
     let mediaInput = { ...parsed };
@@ -142,7 +165,7 @@ async function processEvolutionWebhook(request: Request, rawBody: string, payloa
 }
 
 export function handleEvolutionWebhookHealth() {
-  return NextResponse.json(successResponse("Webhook Evolution ativo.", { ok: true, isolationVersion: 1, coverageVersion: 1 }));
+  return NextResponse.json(successResponse("Webhook Evolution ativo.", { ok: true, isolationVersion: 1, coverageVersion: 1, outboundSyncVersion: 1 }));
 }
 
 export async function handleWhatsAppWebhookHealth(_request: Request) {

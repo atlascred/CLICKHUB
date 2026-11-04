@@ -53,6 +53,7 @@ export type ParsedEvolutionWebhook =
       mimeType?: string;
       fileName?: string;
       messageId: string;
+      sentAt?: Date;
       direction: "entrada" | "saida";
       raw: Record<string, unknown>;
     };
@@ -475,7 +476,8 @@ export function parseEvolutionWebhookPayload(payload: Record<string, unknown>) {
     mediaUrl: media.mediaUrl,
     mimeType: media.mimeType,
     fileName: media.fileName,
-    messageId: String(key.id ?? data.id ?? `${phone}-${Date.now()}`),
+    messageId: String(key.id ?? data.id ?? ""),
+    sentAt: evolutionMessageDate(data.messageTimestamp),
     direction: key.fromMe === true || data.fromMe === true ? "saida" : "entrada",
     raw: payload,
   } satisfies ParsedEvolutionWebhook;
@@ -503,36 +505,34 @@ export function extractEvolutionStatusUpdates(payload: Record<string, unknown>) 
   });
 }
 
+export function resolveEvolutionMessageId(result: unknown) {
+  if (!result || typeof result !== "object") return undefined;
+  const payload = result as { key?: { id?: unknown }; message?: { key?: { id?: unknown } }; messages?: Array<{ id?: unknown }>; messageId?: unknown; id?: unknown };
+  return firstString([payload.messages?.[0]?.id, payload.key?.id, payload.message?.key?.id, payload.messageId, payload.id]);
+}
+
+function evolutionMessageDate(value: unknown) {
+  const seconds = Number(value && typeof value === "object" && "low" in value ? value.low : value);
+  const milliseconds = seconds > 1e12 ? seconds : seconds * 1000;
+  return Number.isFinite(milliseconds) && milliseconds > 0 && milliseconds <= Date.now() + 300_000
+    ? new Date(milliseconds) : undefined;
+}
+
 function resolveWebhookPhone(payload: Record<string, unknown>, data: Record<string, unknown>, key: Record<string, unknown>) {
+  const outbound = key.fromMe === true || data.fromMe === true || String(payload.event ?? "").toLowerCase().replace(/_/g, ".") === "send.message";
   const candidates = [
-    key.remoteJid,
-    key.remoteJidAlt,
-    data.remoteJid,
+    key.remoteJid, key.remoteJidAlt, data.remoteJid,
     payload.key && typeof payload.key === "object" ? (payload.key as Record<string, unknown>).remoteJid : undefined,
-    key.participant,
-    data.participant,
-    payload.phone,
-    data.phone,
-    payload.sender,
-    data.sender,
-  ];
-
+    ...(outbound ? [] : [key.participant, data.participant]),
+    payload.phone, data.phone,
+    ...(outbound ? [] : [payload.sender, data.sender]),
+  ].filter((candidate): candidate is string => typeof candidate === "string" && Boolean(candidate.trim()) && !/@(?:lid|g\.us|broadcast|newsletter)$/.test(candidate));
   for (const candidate of candidates) {
-    if (typeof candidate !== "string" || !candidate.trim()) continue;
-    const normalized = normalizeBrazilianPhone(candidate);
+    const address = candidate.replace(/@.+$/, "").replace(/:\d+$/, "");
+    const normalized = normalizeBrazilianPhone(address);
     if (isValidBrazilianWhatsApp(normalized)) return normalized;
-
-    const digits = candidate.replace(/\D/g, "");
-    for (const size of [13, 12, 11, 10]) {
-      if (digits.length < size) continue;
-      const sliced = digits.slice(-size);
-      const normalizedSlice = normalizeBrazilianPhone(sliced);
-      if (isValidBrazilianWhatsApp(normalizedSlice)) return normalizedSlice;
-    }
   }
-
-  const fallback = String(payload.sender ?? data.sender ?? key.remoteJid ?? data.remoteJid ?? payload.phone ?? "");
-  return fallback.replace(/@.+$/, "").replace(/\D/g, "");
+  return candidates[0]?.replace(/@.+$/, "").replace(/:\d+$/, "").replace(/\D/g, "") || "";
 }
 
 function extractPresenceStatus(payload: Record<string, unknown>, data: Record<string, unknown>) {

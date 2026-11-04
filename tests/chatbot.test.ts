@@ -667,3 +667,25 @@ test('109 — VIVO distingue as duas opções de 600 MEGA, Disney e todas as esc
 test('110 — mudar para 700 MEGA ou Disney durante cadastro mantém a etapa e o preço correto',async()=>{
  for(const [text,index]of [['quero mudar para 700 mega',2],['quero mudar para Disney Plus',1]] as const){const s=scopedCoverageSimulator('ASK_EMAIL',{planId:'giga-coverage-0',planName:'600 MEGA',planValue:100});await s.say(text);assert.equal(s.conversation.state,'ASK_EMAIL');assert.equal((s.conversation.memory as any).planId,s.scopedPlans[index].id);assert.equal((s.conversation.memory as any).planValue,[100,120,150,200][index]);}
 });
+
+test('recibo Evolution guarda o ID real e preserva idempotência do bot após eco do WhatsApp', async () => {
+  const { withEvolutionInstance, scopedEvolutionId } = require('../src/services/evolution-context');
+  const previousInstances = process.env.EVOLUTION_INSTANCES_JSON;
+  const previousFetch = global.fetch;
+  const s = simulator('Recibo com ID real Evolution');
+  const instanceName = 'OUTBOUND TEST';
+  process.env.EVOLUTION_INSTANCES_JSON = JSON.stringify([{ instanceName, apiUrl: 'https://synthetic.invalid', apiKey: 'synthetic', number: '5511900000001' }]);
+  let sends = 0;
+  global.fetch = async (url) => { assert.ok(String(url).startsWith('https://synthetic.invalid/message/sendText/')); sends++; return Response.json({ key: { id: 'provider-outbound-1', fromMe: true } }); };
+  const engine = new ChatbotEngineService({} as any, s.repo as any, {} as any, { interpretConversation: async () => null } as any);
+  try {
+    await withEvolutionInstance(instanceName, () => engine.processIncomingMessage({ phone:'5511900000000', message:'oi', providerId:'incoming-1', provider:'evolution', instanceId:instanceName }));
+    const receipt = s.messages.get(scopedEvolutionId(instanceName,'provider-outbound-1'));
+    assert.ok(receipt); assert.deepEqual(receipt.rawPayload.inReplyTo,['incoming-1']); assert.equal(receipt.rawPayload.providerMessageId,'provider-outbound-1');
+    const repeated = await withEvolutionInstance(instanceName, () => engine.processIncomingMessage({ phone:'5511900000000', message:'oi', providerId:'incoming-1', provider:'evolution', instanceId:instanceName }));
+    assert.equal(repeated.state,'DUPLICATED'); assert.equal(sends,1);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousInstances === undefined) delete process.env.EVOLUTION_INSTANCES_JSON; else process.env.EVOLUTION_INSTANCES_JSON = previousInstances;
+  }
+});
