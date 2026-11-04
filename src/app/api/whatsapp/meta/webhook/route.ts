@@ -19,14 +19,16 @@ export async function POST(request: Request) {
         const value = change.value;
         if (change.field !== "messages" || String(value?.metadata?.phone_number_id) !== process.env.META_WHATSAPP_PHONE_NUMBER_ID?.trim()) continue;
         for (const status of value.statuses || []) {
-          const id = status.biz_opaque_callback_data;
-          if (typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id)) continue;
+          const callback = status.biz_opaque_callback_data;
+          if (typeof callback !== "string") continue;
+          const [id, originalPhone] = callback.split(":");
+          if (!/^[0-9a-f-]{36}$/i.test(id) || (originalPhone && !/^55\d{10,11}$/.test(originalPhone))) continue;
           const nextStatus = ({ sent: "accepted", delivered: "delivered", read: "read", failed: "failed" } as Record<string, RecipientStatus>)[status.status];
           if (!nextStatus || typeof status.id !== "string") continue;
           for (let attempt = 0; attempt < 5; attempt++) {
             const current = await campaignStore.get(id);
             if (!current || current.phoneNumberId !== String(value.metadata.phone_number_id)) break;
-            const index = current.recipients.findIndex(r => r.phone === status.recipient_id && (!r.messageId || r.messageId === status.id) && r.status !== "queued");
+            const index = current.recipients.findIndex(r => (r.messageId === status.id || (!r.messageId && r.phone === (originalPhone || status.recipient_id))) && r.status !== "queued");
             if (index < 0) break;
             const next = structuredClone(current);
             const rank: Record<RecipientStatus, number> = { queued: 0, sending: 1, uncertain: 1, failed: 2, accepted: 3, delivered: 4, read: 5 };

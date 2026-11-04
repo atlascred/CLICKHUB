@@ -48,7 +48,7 @@ export class OfficialMetaClient {
   }
   async send(phone: string, template: unknown, campaignId: string) {
     const config = this.config();
-    const result = await this.request(`${config.phoneId}/messages`, { messaging_product: "whatsapp", recipient_type: "individual", to: phone, type: "template", template, biz_opaque_callback_data: campaignId });
+    const result = await this.request(`${config.phoneId}/messages`, { messaging_product: "whatsapp", recipient_type: "individual", to: phone, type: "template", template, biz_opaque_callback_data: `${campaignId}:${phone}` });
     const id = result?.messages?.[0]?.id;
     if (typeof id !== "string" || !id) throw new MetaRequestError("Sem identificação da mensagem na Meta. Não reenvie sem conferir.", true);
     return id;

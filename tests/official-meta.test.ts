@@ -84,15 +84,16 @@ test('webhook oficial percorre eventos, isola WABA/número e preserva leitura co
  const original={get:campaignStore.get,replace:campaignStore.replace};
  const keys=['META_WHATSAPP_APP_SECRET','META_WHATSAPP_PHONE_NUMBER_ID','META_WHATSAPP_BUSINESS_ACCOUNT_ID','META_WHATSAPP_VERIFY_TOKEN'];const saved=keys.map(k=>process.env[k]);
  const f=fixture(async()=> 'wamid.test');await f.service.next(f.get().id,'owner','123');
+ const accepted=await f.store.get(f.get().id);const waiting=structuredClone(accepted!);waiting.recipients[0].status='sending';delete waiting.recipients[0].messageId;await f.store.replace(accepted!,waiting);
  campaignStore.get=f.store.get;campaignStore.replace=f.store.replace;
  try{
   process.env.META_WHATSAPP_APP_SECRET='secret';process.env.META_WHATSAPP_PHONE_NUMBER_ID='123';process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID='456';process.env.META_WHATSAPP_VERIFY_TOKEN='verify';
   assert.equal((await GET(new Request('https://example.com?hub.mode=subscribe&hub.verify_token=verify&hub.challenge=challenge'))).status,200);
   assert.equal((await GET(new Request('https://example.com?hub.mode=subscribe&hub.verify_token=bad&hub.challenge=challenge'))).status,403);
-  const status=(state:string)=>({id:'wamid.test',recipient_id:'5511900000000',status:state,biz_opaque_callback_data:f.get().id});
+  const status=(state:string)=>({id:'wamid.test',recipient_id:'551100000000',status:state,biz_opaque_callback_data:f.get().id+':5511900000000'});
   const change=(phone:string,state:string)=>({field:'messages',value:{metadata:{phone_number_id:phone},statuses:[status(state)]}});
   async function post(entry:any[]){const raw=JSON.stringify({object:'whatsapp_business_account',entry});return POST(new Request('https://example.com',{method:'POST',body:raw,headers:{'x-hub-signature-256':'sha256='+createHmac('sha256','secret').update(raw).digest('hex')}}));}
-  assert.equal((await post([{id:'other',changes:[change('123','read')]},{id:'456',changes:[change('other','read')]}])).status,200);assert.equal(f.get().recipients[0].status,'accepted');
+  assert.equal((await post([{id:'other',changes:[change('123','read')]},{id:'456',changes:[change('other','read')]}])).status,200);assert.equal(f.get().recipients[0].status,'sending');
   assert.equal((await post([{id:'456',changes:[change('123','delivered'),change('123','read')]}])).status,200);assert.equal(f.get().recipients[0].status,'read');
   await post([{id:'456',changes:[change('123','sent'),change('123','delivered'),change('123','failed')]}]);assert.equal(f.get().recipients[0].status,'read');
  }finally{Object.assign(campaignStore,original);keys.forEach((k,i)=>{if(saved[i]===undefined)delete process.env[k];else process.env[k]=saved[i];});}
