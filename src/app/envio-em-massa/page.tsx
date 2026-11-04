@@ -3,7 +3,7 @@ import { MassMessagePanel } from "@/modules/envio-em-massa/components/mass-messa
 
 export default function EnvioEmMassaPage() {
   return (
-    <AppShell title="Envio em Massa">
+    <AppShell title="WhatsApp Oficial">
       <MassMessagePanel />
     </AppShell>
   );

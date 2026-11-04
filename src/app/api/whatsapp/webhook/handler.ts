@@ -7,7 +7,6 @@ import { createHash } from "node:crypto";
 import { MessageBatchService } from "@/modules/chatbot/services/message-batch.service";
 import { interpretIncomingMedia } from "@/modules/chatbot/services/incoming-media.service";
 import { Prisma } from "@prisma/client";
-import { Buffer } from "node:buffer";
 import { NextResponse } from "next/server";
 import { errorResponse, successResponse } from "@/lib/api-response";
 import { prisma } from "@/lib/prisma";
@@ -20,13 +19,6 @@ import {
   isValidEvolutionWebhook,
   parseEvolutionWebhookPayload,
 } from "@/services/evolution";
-import {
-  downloadMetaMediaBytes,
-  isMetaWhatsAppEnabled,
-  isValidMetaWebhook,
-  parseMetaWebhookPayload,
-  verifyMetaWebhookChallenge,
-} from "@/services/meta-whatsapp";
 
 const chatbotEngineService = new ChatbotEngineService();
 const openAiService = new OpenAiService();
@@ -34,9 +26,6 @@ const batchService = new MessageBatchService();
 
 export async function handleEvolutionWebhook(request: Request) {
   const rawBody = await request.text();
-  if (isMetaWhatsAppEnabled()) {
-    return handleMetaWebhook(request, rawBody);
-  }
 
   const payload = parsePayload(rawBody);
   if (!payload) return NextResponse.json(errorResponse("Payload inválido.", "INVALID_WEBHOOK"), { status: 422 });
@@ -156,83 +145,8 @@ export function handleEvolutionWebhookHealth() {
   return NextResponse.json(successResponse("Webhook Evolution ativo.", { ok: true, isolationVersion: 1, coverageVersion: 1 }));
 }
 
-export async function handleWhatsAppWebhookHealth(request: Request) {
-  if (isMetaWhatsAppEnabled()) {
-    const challenge = verifyMetaWebhookChallenge(request);
-    if (challenge) return new NextResponse(challenge, { status: 200 });
-    return NextResponse.json(successResponse("Webhook Meta WhatsApp ativo.", { ok: true, provider: "meta" }));
-  }
+export async function handleWhatsAppWebhookHealth(_request: Request) {
   return handleEvolutionWebhookHealth();
-}
-
-async function handleMetaWebhook(request: Request, rawBody: string) {
-  if (!isValidMetaWebhook(request, rawBody)) {
-    return NextResponse.json(errorResponse("Webhook Meta nao autorizado.", "UNAUTHORIZED"), { status: 401 });
-  }
-
-  const payload = parsePayload(rawBody);
-  if (!payload) {
-    return NextResponse.json(errorResponse("Payload invalido.", "INVALID_WEBHOOK"), { status: 422 });
-  }
-
-  const parsed = parseMetaWebhookPayload(payload);
-  if (!parsed) {
-    return NextResponse.json(successResponse("Evento Meta ignorado.", { ignored: true }));
-  }
-
-  if (parsed.event === "status") {
-    for (const update of parsed.updates) {
-      await prisma.chatMessage.updateMany({
-        where: { providerId: update.messageId },
-        data: {
-          rawPayload: {
-            provider: "meta",
-            status: update.status,
-            rawLastStatus: payload,
-          } as Prisma.InputJsonValue,
-          readAt: update.status === "lido" ? new Date() : undefined,
-        },
-      });
-    }
-    return NextResponse.json(successResponse("Status Meta processado.", { updates: parsed.updates.length }));
-  }
-
-  if (await isBlockedConversation(parsed.phone)) {
-    return NextResponse.json(successResponse("Contato bloqueado ignorado.", { ignored: true, blocked: true }));
-  }
-
-  const body = await resolveMetaIncomingMessageBody(parsed);
-  try {
-    const result = await chatbotEngineService.processIncomingMessage({
-      phone: parsed.phone,
-      message: body,
-      providerId: parsed.messageId,
-      rawPayload: {
-        provider: "meta",
-        kind: parsed.kind,
-        mediaId: parsed.mediaId,
-        mediaUrl: parsed.mediaUrl,
-        mimeType: parsed.mimeType,
-        fileName: parsed.fileName,
-        transcription: parsed.kind === "audio" ? body : undefined,
-        raw: parsed.raw,
-      } as Prisma.InputJsonValue,
-      instanceId: process.env.META_WHATSAPP_PHONE_NUMBER_ID,
-      provider: "meta",
-    });
-    return NextResponse.json(successResponse("Webhook Meta processado.", result));
-  } catch (error) {
-    await writeTechnicalLog({
-      level: "ERROR",
-      category: "webhook",
-      message: "Falha ao processar fluxo da Meta WhatsApp API.",
-      method: "POST",
-      endpoint: "/api/whatsapp/webhook",
-      integration: "meta-whatsapp",
-      metadata: { errorType: error instanceof Error ? error.name : "unknown", reviewRequired: true },
-    });
-    return NextResponse.json(errorResponse("Nao foi possivel processar o fluxo da Meta."), { status: 500 });
-  }
 }
 
 function parsePayload(rawBody: string) {
@@ -314,44 +228,8 @@ async function resolveIncomingMessageBody(parsed: ReturnType<typeof parseEvoluti
   }
 }
 
-async function resolveMetaIncomingMessageBody(parsed: NonNullable<ReturnType<typeof parseMetaWebhookPayload>>) {
-  if (parsed.event !== "message") return "";
-  if (parsed.kind !== "audio") return parsed.message || defaultWebhookMessageLabel(parsed.kind);
-
-  if (!parsed.mediaId) {
-    return "[Áudio recebido sem arquivo para transcrição]";
-  }
-
-  try {
-    const media = await downloadMetaMediaBytes(parsed.mediaId);
-    const base64 = Buffer.from(media.bytes).toString("base64");
-    const transcription = await openAiService.transcribeAudio({
-      url: `data:${parsed.mimeType || media.mimeType};base64,${base64}`,
-      mimeType: parsed.mimeType || media.mimeType || "audio/ogg",
-    });
-    return transcription || "[Áudio não pôde ser transcrito]";
-  } catch (error) {
-    await writeTechnicalLog({
-      level: "ERROR",
-      category: "webhook",
-      message: "Falha ao transcrever áudio recebido pela Meta WhatsApp API.",
-      method: "POST",
-      endpoint: "/api/whatsapp/webhook",
-      integration: "meta-whatsapp",
-      metadata: {
-        error: error instanceof Error ? error.message : "unknown",
-        mimeType: parsed.mimeType,
-        hasMediaId: Boolean(parsed.mediaId),
-      },
-    });
-    return "[Áudio não pôde ser transcrito]";
-  }
-}
-
 function redactCredentials(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactCredentials);
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).filter(([key]) => !/apikey|token|secret|authorization|password/i.test(key)).map(([key, item]) => [key, redactCredentials(item)]));
   return value;
 }
-
-async function isBlockedConversation(phone: string, agentId?: string) { return (await getConversationGuard(phone, agentId)).blocked; }

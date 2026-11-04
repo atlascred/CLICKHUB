@@ -112,7 +112,7 @@ export function verifyMetaWebhookChallenge(request: Request) {
 
 export function isValidMetaWebhook(request: Request, rawBody: string) {
   const appSecret = process.env.META_WHATSAPP_APP_SECRET?.trim();
-  if (!appSecret) return true;
+  if (!appSecret) return false;
   const signature = request.headers.get("x-hub-signature-256")?.trim() || "";
   if (!signature.startsWith("sha256=")) return false;
   const expected = `sha256=${createHmac("sha256", appSecret).update(rawBody).digest("hex")}`;

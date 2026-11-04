@@ -1,25 +1,12 @@
 import { resolveSelectedAgent } from "@/services/whatsapp-agent";
 import { withEvolutionInstance } from "@/services/evolution-context";
 import { NextResponse } from "next/server";
-import { WHATSAPP_BROADCAST_MAX_BATCH_SIZE } from "@/config/whatsapp-broadcast";
 import { permissions } from "@/constants/permissions";
 import { authErrorResponse } from "@/lib/api-errors";
 import { errorResponse, successResponse } from "@/lib/api-response";
 import { requireCurrentUser } from "@/lib/auth-context";
 import { assertPermission } from "@/lib/permissions";
-import { cancelBroadcastDispatches, createBroadcastDispatch, deleteBroadcastDispatches, listBroadcastDispatches, processDueBroadcasts, saveBroadcastDispatch, type BroadcastScheduleBlock } from "@/services/whatsapp-broadcast";
-import { parsePhoneList } from "@/services/validators";
-
-type BroadcastBody = {
-  phones?: string;
-  agentId?: string;
-  message?: string;
-  media?: string;
-  mimeType?: string;
-  fileName?: string;
-  scheduleBlocks?: BroadcastScheduleBlock[];
-  sendNow?: boolean;
-};
+import { cancelBroadcastDispatches, deleteBroadcastDispatches, listBroadcastDispatches } from "@/services/whatsapp-broadcast";
 
 export async function GET(request: Request) {
   try {
@@ -27,7 +14,6 @@ export async function GET(request: Request) {
     assertPermission(user, permissions.conversationsView);
     const agent = await resolveSelectedAgent(new URL(request.url).searchParams.get("agentId") || undefined);
     return await withEvolutionInstance(agent.zapiInstanceId!, async () => {
-    await processDueBroadcasts(3);
     const records = await listBroadcastDispatches();
     return NextResponse.json(successResponse("Historico de disparos consultado.", records));
     });
@@ -38,88 +24,8 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
-  try {
-    const user = await requireCurrentUser();
-    assertPermission(user, permissions.conversationsView);
-    const body = await request.json().catch(() => null) as BroadcastBody | null;
-    const message = String(body?.message ?? "").trim();
-    const media = String(body?.media ?? "").trim();
-    const scheduleBlocks = Array.isArray(body?.scheduleBlocks) ? body.scheduleBlocks : [];
-    const sendNow = body?.sendNow === true;
-    const parsedPhones = parsePhoneList(String(body?.phones ?? ""));
-    const validPhones = parsedPhones.filter((item) => item.valid);
-    const invalidPhones = parsedPhones.filter((item) => !item.valid).map((item) => item.raw);
-
-    if (!message && !media) {
-      return NextResponse.json(errorResponse("Mensagem ou imagem obrigatoria.", "VALIDATION_ERROR"), { status: 422 });
-    }
-
-    if (!validPhones.length) {
-      return NextResponse.json(errorResponse("Informe ao menos um numero valido.", "VALIDATION_ERROR"), { status: 422 });
-    }
-
-    if (!sendNow && (!scheduleBlocks.length || scheduleBlocks.every((block) => !block.time || !Number(block.quantity)))) {
-      return NextResponse.json(errorResponse("Informe ao menos um horario e quantidade para o disparo.", "VALIDATION_ERROR"), { status: 422 });
-    }
-
-    const seenPhones = new Set<string>();
-    const uniqueValidPhones = validPhones.filter((item) => {
-      if (seenPhones.has(item.phone)) return false;
-      seenPhones.add(item.phone);
-      return true;
-    });
-    const duplicatePhones = validPhones
-      .filter((item, index) => validPhones.findIndex((entry) => entry.phone === item.phone) !== index)
-      .map((item) => item.phone);
-
-    if (uniqueValidPhones.length > WHATSAPP_BROADCAST_MAX_BATCH_SIZE) {
-      return NextResponse.json(
-        errorResponse(`O lote ultrapassa o limite seguro de ${WHATSAPP_BROADCAST_MAX_BATCH_SIZE} numeros por envio.`, "BATCH_LIMIT"),
-        { status: 422 },
-      );
-    }
-
-    const batchId = `broadcast-${Date.now()}`;
-    const phones = uniqueValidPhones.map((item) => item.phone);
-    const agent = await resolveSelectedAgent(body?.agentId);
-    return await withEvolutionInstance(agent.zapiInstanceId!, async () => {
-    const dispatch = createBroadcastDispatch({
-      batchId,
-      message,
-      media: media || undefined,
-      mediaKind: media ? "imagem" : undefined,
-      mimeType: body?.mimeType,
-      fileName: body?.fileName,
-      phones,
-      invalidPhones,
-      duplicatePhones,
-      scheduleBlocks,
-      sendNow,
-      ownerUserId: user.id,
-    });
-    await saveBroadcastDispatch(dispatch);
-    const processed = await processDueBroadcasts(sendNow ? 1 : 3);
-
-    return NextResponse.json(successResponse("Disparo em lote agendado.", {
-      id: dispatch.id,
-      batchId,
-      totalValidPhones: phones.length,
-      totalInvalidPhones: invalidPhones.length,
-      totalDuplicatePhones: duplicatePhones.length,
-      scheduled: !sendNow,
-      sendNow,
-      processed,
-    }), { status: 202 });
-    });
-  } catch (error) {
-    const authError = authErrorResponse(error);
-    if (authError) return authError;
-    return NextResponse.json(
-      errorResponse(error instanceof Error ? error.message : "Nao foi possivel iniciar o disparo.", "BROADCAST_ERROR"),
-      { status: 500 },
-    );
-  }
+export async function POST(_request: Request) {
+  return NextResponse.json(errorResponse("O disparo antigo foi substituído. Use WhatsApp Oficial em /envio-em-massa.", "OFFICIAL_META_REQUIRED"), { status: 410 });
 }
 
 export async function PUT(request: Request) {

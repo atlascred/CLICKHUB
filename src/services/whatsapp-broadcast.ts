@@ -1,4 +1,4 @@
-import { currentEvolutionInstance, scopedEvolutionId } from "@/services/evolution-context";
+import { currentEvolutionInstance } from "@/services/evolution-context";
 import { ChatbotRepository } from "@/repositories/chatbot.repository";
 import "server-only";
 
@@ -9,11 +9,9 @@ import {
   WHATSAPP_BROADCAST_MIN_DELAY_SECONDS,
 } from "@/config/whatsapp-broadcast";
 import { prisma } from "@/lib/prisma";
-import { checkEvolutionWhatsAppNumber, sendEvolutionMediaMessage, sendEvolutionTextMessage } from "@/services/evolution";
-import { checkMetaWhatsAppNumber, isMetaWhatsAppEnabled, sendMetaMediaMessage, sendMetaTemplateMessage, sendMetaTextMessage } from "@/services/meta-whatsapp";
 
 function broadcastHistoryKey() {
-  if (isMetaWhatsAppEnabled() || currentEvolutionInstance().instanceName === process.env.EVOLUTION_INSTANCE) return "whatsappBroadcastDispatches";
+  if (currentEvolutionInstance().instanceName === process.env.EVOLUTION_INSTANCE) return "whatsappBroadcastDispatches";
   return `chatbot:broadcast:${currentEvolutionInstance().instanceName}`;
 }
 
@@ -167,157 +165,12 @@ export async function cancelBroadcastDispatches(ids: string[]) {
   return { canceled };
 }
 
-export async function processDueBroadcasts(limit = 5) {
-  const now = Date.now();
-  const history = await readBroadcastHistory();
-  const dueMessages = history.flatMap((dispatch) => {
-    if (["concluido", "concluido_parcial", "concluido_sem_envios", "auto_pausado", "cancelado"].includes(dispatch.status)) return [];
-    return dispatch.recipientStatuses
-      .filter((recipient) => recipient.status === "agendado")
-      .filter((recipient) => !recipient.scheduledFor || new Date(recipient.scheduledFor).getTime() <= now)
-      .map((recipient) => ({
-        dispatchId: dispatch.id,
-        phone: recipient.phone,
-        message: dispatch.message,
-        media: dispatch.media,
-        mediaKind: dispatch.mediaKind,
-        mimeType: dispatch.mimeType,
-        fileName: dispatch.fileName,
-        ownerUserId: dispatch.ownerUserId,
-        scheduledFor: recipient.scheduledFor,
-      }));
-  }).sort((left, right) => {
-    return new Date(left.scheduledFor ?? 0).getTime() - new Date(right.scheduledFor ?? 0).getTime();
-  }).slice(0, limit);
-
-  for (const item of dueMessages) {
-    await processBroadcastMessage(item);
-  }
-
-  return { processed: dueMessages.length };
+export async function processDueBroadcasts(_limit = 5) {
+  return { processed: 0 }; // Legacy Evolution campaigns are retired; never drain their queue.
 }
 
-export async function processBroadcastMessage(message: BroadcastProcessMessage) {
-  const dispatch = await findBroadcastDispatch(message.dispatchId);
-  if (!dispatch) return;
-
-  const currentSummary = summarizeStatuses(dispatch.recipientStatuses);
-  if (currentSummary.falhaEnvio + currentSummary.falhaValidacao >= WHATSAPP_BROADCAST_AUTO_PAUSE_FAILURES) {
-    await patchRecipientStatus(message.dispatchId, message.phone, {
-      status: "auto_pausado",
-      error: "Disparo pausado automaticamente por excesso de falhas.",
-      checkedAt: new Date().toISOString(),
-    });
-    return;
-  }
-
-  await patchRecipientStatus(message.dispatchId, message.phone, {
-    status: "processando",
-    checkedAt: new Date().toISOString(),
-  });
-
-  try {
-    const check = isMetaWhatsAppEnabled()
-      ? await checkMetaWhatsAppNumber(message.phone)
-      : await checkEvolutionWhatsAppNumber(message.phone);
-    if (!check.exists) {
-      await patchRecipientStatus(message.dispatchId, message.phone, {
-        status: "sem_whatsapp",
-        error: "Numero sem WhatsApp ativo.",
-        checkedAt: new Date().toISOString(),
-      });
-      return;
-    }
-  } catch (error) {
-    await patchRecipientStatus(message.dispatchId, message.phone, {
-      status: "falha_validacao",
-      error: error instanceof Error ? error.message : "Falha ao validar numero no WhatsApp.",
-      checkedAt: new Date().toISOString(),
-    });
-    return;
-  }
-
-  try {
-    const usingMeta = isMetaWhatsAppEnabled();
-    const result = usingMeta
-      ? await sendMetaBroadcastMessage(message)
-      : message.media && message.mediaKind
-      ? await sendEvolutionMediaMessage({
-          to: message.phone,
-          media: message.media,
-          kind: message.mediaKind,
-          caption: message.message,
-          mimeType: message.mimeType,
-          fileName: message.fileName,
-      })
-      : await sendEvolutionTextMessage({ to: message.phone, message: message.message, delayTypingSeconds: 2 });
-    const rawProviderId = resolveWhatsAppMessageId(result);
-    const providerId = rawProviderId && !usingMeta ? scopedEvolutionId(currentEvolutionInstance().instanceName, rawProviderId) : rawProviderId;
-    const conversation = await findOrCreateBroadcastConversation({
-      phone: message.phone,
-      ownerUserId: message.ownerUserId,
-    });
-    await prisma.chatMessage.create({
-      data: {
-        conversationId: conversation.id,
-        direction: "outbound",
-        body: message.media ? `Imagem enviada${message.message ? `\n${message.message}` : ""}` : message.message,
-        providerId,
-        sentAt: new Date(),
-        rawPayload: normalizeJson({
-          provider: usingMeta ? "meta" : "evolution",
-          source: "broadcast",
-          media: message.media ? { source: message.media, kind: message.mediaKind, mimeType: message.mimeType, fileName: message.fileName } : undefined,
-          result,
-        }),
-      },
-    });
-    await prisma.chatConversation.update({
-      where: { id: conversation.id },
-      data: { updatedAt: new Date() },
-    });
-    await patchRecipientStatus(message.dispatchId, message.phone, {
-      status: "enviado",
-      error: null,
-      checkedAt: new Date().toISOString(),
-      sentAt: new Date().toISOString(),
-    });
-  } catch (error) {
-    await patchRecipientStatus(message.dispatchId, message.phone, {
-      status: "falha_envio",
-      error: error instanceof Error ? error.message : "Falha ao enviar mensagem.",
-      checkedAt: new Date().toISOString(),
-    });
-  }
-}
-
-async function sendMetaBroadcastMessage(message: BroadcastProcessMessage) {
-  const templateName = process.env.META_WHATSAPP_BROADCAST_TEMPLATE_NAME?.trim();
-  if (templateName) {
-    return sendMetaTemplateMessage({
-      to: message.phone,
-      templateName,
-      languageCode: process.env.META_WHATSAPP_BROADCAST_TEMPLATE_LANGUAGE?.trim() || "pt_BR",
-      bodyParameters: message.message ? [message.message] : [],
-      media: message.media,
-      kind: message.mediaKind,
-      mimeType: message.mimeType,
-      fileName: message.fileName,
-    });
-  }
-
-  if (message.media && message.mediaKind) {
-    return sendMetaMediaMessage({
-      to: message.phone,
-      media: message.media,
-      kind: message.mediaKind,
-      caption: message.message,
-      mimeType: message.mimeType,
-      fileName: message.fileName,
-    });
-  }
-
-  return sendMetaTextMessage({ to: message.phone, message: message.message });
+export async function processBroadcastMessage(_message: BroadcastProcessMessage) {
+  throw new Error("Disparo antigo desativado. Use WhatsApp Oficial.");
 }
 
 async function patchRecipientStatus(
@@ -460,7 +313,7 @@ function resolveDispatchStatus(summary: ReturnType<typeof summarizeStatuses>) {
 }
 
 async function findOrCreateBroadcastConversation(input: { phone: string; ownerUserId?: string }) {
-  const agent = isMetaWhatsAppEnabled() ? null : await new ChatbotRepository().getAgentByInstance(currentEvolutionInstance().instanceName, true);
+  const agent = await new ChatbotRepository().getAgentByInstance(currentEvolutionInstance().instanceName, true);
   const existing = await prisma.chatConversation.findFirst({
     where: { phone: input.phone, agentId: agent?.id ?? null, deletedAt: null },
     orderBy: { updatedAt: "desc" },

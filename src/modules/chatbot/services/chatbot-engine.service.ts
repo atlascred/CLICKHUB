@@ -6,7 +6,7 @@ import { ChatbotRepository } from "@/repositories/chatbot.repository";
 import { OpenAiService } from "@/services/openai/openai.service";
 import type { ExtractedCustomerData } from "@/services/openai/openai.service";
 import { checkEvolutionWhatsAppNumber, sendEvolutionTextMessage } from "@/services/evolution";
-import { checkMetaWhatsAppNumber, isMetaWhatsAppEnabled, markMetaMessageAsRead, sendMetaTextMessage } from "@/services/meta-whatsapp";
+import { checkMetaWhatsAppNumber, markMetaMessageAsRead, sendMetaTextMessage } from "@/services/meta-whatsapp";
 import { ZapiService } from "@/services/zapi/zapi.service";
 import { onlyDigits } from "@/utils/mask";
 import { commercialKnowledge, officialAnswer } from "@/modules/chatbot/knowledge";
@@ -212,7 +212,7 @@ export class ChatbotEngineService {
     try {
       if (this.delivery) {
         await this.delivery.send({ phone, message: next.reply });
-      } else if (provider === "meta" || (provider === "evolution" && isMetaWhatsAppEnabled())) {
+      } else if (provider === "meta") {
         const destinationPhone = await this.resolveMetaDestinationPhone(phone);
         await sendMetaTextMessage({ to: destinationPhone, message: next.reply });
       } else if (provider === "evolution") {

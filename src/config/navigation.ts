@@ -20,7 +20,7 @@ export const navigationItems = [
   { title: "Dashboard", href: "/dashboard", icon: BarChart3, permission: permissions.dashboardView },
   { title: "Visão Geral", href: "/visao-geral", icon: ChartPie, permission: permissions.dashboardView },
   { title: "Conversas", href: "/conversas", icon: MessageCircleMore, permission: permissions.conversationsView, employeeVisible: true },
-  { title: "Envio em Massa", href: "/envio-em-massa", icon: Megaphone, permission: permissions.agentsEdit, badgeLabel: "Novo", badgeTone: "green" },
+  { title: "WhatsApp Oficial", href: "/envio-em-massa", icon: Megaphone, permission: permissions.agentsEdit, badgeLabel: "Novo", badgeTone: "green" },
   { title: "Leads", href: "/leads", icon: Users, permission: permissions.leadsView },
   { title: "Verificar WhatsApp", href: "/verificar-whatsapp", icon: Smartphone, permission: permissions.conversationsView },
   { title: "Saúde WhatsApp", href: "/saude-evolution", icon: HeartPulse, permission: permissions.conversationsView },

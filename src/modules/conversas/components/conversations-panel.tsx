@@ -736,10 +736,10 @@ export function ConversationsPanel() {
               </button>
               <button
                 type="button"
-                onClick={() => setNewConversation((current) => ({ ...current, bulkMode: true }))}
+                onClick={() => { window.location.href = "/envio-em-massa"; }}
                 className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${newConversation.bulkMode ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-blue-500/10"}`}
               >
-                Disparo em lote
+                WhatsApp Oficial
               </button>
             </div>
 

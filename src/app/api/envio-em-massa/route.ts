@@ -1,30 +1,62 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { authErrorResponse } from "@/lib/api-errors";
 import { errorResponse, successResponse } from "@/lib/api-response";
 import { requireCurrentUser } from "@/lib/auth-context";
 import { assertPermission } from "@/lib/permissions";
 import { permissions } from "@/constants/permissions";
-import { resolveLeadAgentScope } from "@/lib/lead-source-access";
-import { resolveSelectedAgent } from "@/services/whatsapp-agent";
-import { MassMessageService } from "@/modules/envio-em-massa/services/mass-message.service";
-import { POST as sendWhatsApp } from "@/app/api/whatsapp/send/route";
-export const runtime="nodejs";
-export const maxDuration=300;
+import { campaignContacts, MassMessageService } from "@/modules/envio-em-massa/services/mass-message.service";
+import { campaignStore } from "@/modules/envio-em-massa/services/campaign-store";
+import { officialMetaReadiness, OfficialMetaClient } from "@/modules/envio-em-massa/services/official-meta.service";
+import { buildTemplatePayload } from "@/modules/envio-em-massa/lib/templates";
+export const runtime = "nodejs";
+export const maxDuration = 60;
+const client = new OfficialMetaClient();
+const service = new MassMessageService(campaignStore, (phone, template, id) => client.send(phone, template, id));
+async function currentUser() {
+  const user = await requireCurrentUser();
+  assertPermission(user, permissions.agentsEdit);
+  assertPermission(user, permissions.conversationsView);
+  return user;
+}
+function validId(id: unknown): asserts id is string {
+  if (typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw new Error("Identificação da campanha inválida.");
+}
+function failure(error: unknown) {
+  return authErrorResponse(error) ?? NextResponse.json(errorResponse(error instanceof Error ? error.message : "Falha na campanha oficial."), { status: 422 });
+}
+export async function GET(request: Request) {
+  try {
+    const user = await currentUser();
+    const id = new URL(request.url).searchParams.get("id");
+    if (id) { validId(id); return NextResponse.json(successResponse("Campanha consultada.", await service.read(id, user.id))); }
+    const readiness = officialMetaReadiness();
+    return NextResponse.json(successResponse("Conexão oficial consultada.", { ...readiness, templates: readiness.configured ? await client.templates() : [] }));
+  } catch (error) { return failure(error); }
+}
 export async function POST(request: Request) {
   try {
-    const user=await requireCurrentUser(); assertPermission(user,permissions.agentsEdit); assertPermission(user,permissions.conversationsView);
-    const data=await request.formData();
-    const agent=await resolveSelectedAgent(String(data.get("agentId")??"")||undefined);
-    const scope=resolveLeadAgentScope(user);
-    if(scope!=="both" && agent.zapiInstanceId!==(scope==="click"?"CLICK":"GIGA CLICK")) throw new Error("FORBIDDEN");
-    const file=data.get("file");
-    if(file instanceof File && file.size>3*1024*1024) return NextResponse.json(errorResponse("Use um arquivo de até 3 MB."),{status:422});
-    const media=file instanceof File?{fileName:file.name,mimeType:file.type||"application/octet-stream",dataUrl:`data:${file.type||"application/octet-stream"};base64,${Buffer.from(await file.arrayBuffer()).toString("base64")}`}:undefined;
-    const service=new MassMessageService(async(phone,payload)=>{
-      const response=await sendWhatsApp(new Request(new URL("/api/whatsapp/send",request.url),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...payload,to:phone,agentId:agent.id})}));
-      const result=await response.json(); if(!response.ok||result.status!=="success") throw new Error(result.message||"Falha ao enviar.");
-    });
-    const result=await service.send({contactsText:String(data.get("contacts")??""),message:String(data.get("message")??""),caption:String(data.get("caption")??""),media});
-    return NextResponse.json(successResponse("Disparo concluído.",result));
-  } catch(error){return authErrorResponse(error)??NextResponse.json(errorResponse(error instanceof Error?error.message:"Falha no envio em massa."),{status:500});}
+    const user = await currentUser();
+    if (!officialMetaReadiness().configured) throw new Error("Cadastre o número oficial e configure a conexão com a Meta antes de enviar.");
+    const body = await request.json();
+    validId(body.id);
+    if (body.action === "next") return NextResponse.json(successResponse("Campanha atualizada.", await service.next(body.id, user.id, process.env.META_WHATSAPP_PHONE_NUMBER_ID!.trim())));
+    if (body.action !== "create" || body.consent !== true) throw new Error("Confirme que os contatos autorizaram o recebimento das mensagens.");
+    if (body.agentId || body.message || body.file || body.media) throw new Error("Esta tela envia exclusivamente modelos aprovados pela API oficial da Meta.");
+    const contacts = campaignContacts(body.contacts);
+    const fingerprint = createHash("sha256").update(JSON.stringify({ contacts, templateId: body.templateId, values: body.values, mediaUrl: body.mediaUrl })).digest("hex");
+    const existing = await campaignStore.get(body.id);
+    if (existing) {
+      if (existing.ownerId !== user.id || existing.fingerprint !== fingerprint) throw new Error("Identificação já usada em outra campanha.");
+      return NextResponse.json(successResponse("Campanha já registrada.", existing));
+    }
+    const templates = await client.templates();
+    const selected = templates.find(t => t.id === body.templateId);
+    if (!selected) throw new Error("O modelo não está aprovado ou não pertence à conta oficial conectada.");
+    const template = buildTemplatePayload(selected, body.values || {}, body.mediaUrl);
+    await campaignStore.create({ id: body.id, ownerId: user.id, phoneNumberId: process.env.META_WHATSAPP_PHONE_NUMBER_ID!.trim(), fingerprint, createdAt: new Date().toISOString(), template, recipients: contacts.map(phone => ({ phone, status: "queued" })) });
+    const saved = await service.read(body.id, user.id);
+    if (saved.fingerprint !== fingerprint) throw new Error("Identificação já usada em outra campanha.");
+    return NextResponse.json(successResponse("Campanha oficial criada.", saved), { status: 201 });
+  } catch (error) { return failure(error); }
 }

@@ -9,7 +9,6 @@ import { requireCurrentUser } from "@/lib/auth-context";
 import { prisma } from "@/lib/prisma";
 import { assertPermission } from "@/lib/permissions";
 import { resolveEvolutionPhone, sendEvolutionAudioMessage, sendEvolutionMediaMessage, sendEvolutionTextMessage } from "@/services/evolution";
-import { checkMetaWhatsAppNumber, isMetaWhatsAppEnabled, sendMetaMediaMessage, sendMetaTextMessage } from "@/services/meta-whatsapp";
 import { normalizePhone } from "@/services/validators";
 
 export const runtime = "nodejs";
@@ -38,31 +37,16 @@ export async function POST(request: Request) {
       return NextResponse.json(errorResponse("Destino e mensagem, audio ou anexo sao obrigatorios.", "VALIDATION_ERROR"), { status: 422 });
     }
 
-    const usingMeta = isMetaWhatsAppEnabled();
-    if (usingMeta && body.audio) {
-      return NextResponse.json(errorResponse("Envio manual de audio pela Meta ainda nao esta habilitado.", "VALIDATION_ERROR"), { status: 422 });
-    }
     const existing = body.conversationId ? await prisma.chatConversation.findFirst({ where: { id: body.conversationId, deletedAt: null } }) : null;
     if (body.conversationId && !existing) throw new Error("Conversa não encontrada.");
     if (existing && normalizePhone(existing.phone) !== normalizePhone(body.to)) throw new Error("O destino não corresponde à conversa selecionada.");
     if (existing?.agentId && body.agentId && existing.agentId !== body.agentId) throw new Error("A conversa pertence a outro agente.");
-    const agent = usingMeta ? null : await resolveSelectedAgent(existing?.agentId || body.agentId);
+    const agent = await resolveSelectedAgent(existing?.agentId || body.agentId);
     const destinationInput = body.to;
     const execute = async () => {
-    const resolvedPhone = usingMeta ? await checkMetaWhatsAppNumber(destinationInput) : await resolveEvolutionPhone(destinationInput);
+    const resolvedPhone = await resolveEvolutionPhone(destinationInput);
     const destinationPhone = resolvedPhone.phone || normalizePhone(destinationInput);
-    const result = usingMeta
-      ? body.media && body.kind
-        ? await sendMetaMediaMessage({
-            to: destinationPhone,
-            media: body.media,
-            kind: body.kind,
-            caption: body.message,
-            fileName: body.fileName,
-            mimeType: body.mimeType,
-          })
-        : await sendMetaTextMessage({ to: destinationPhone, message: body.message as string })
-      : body.audio
+    const result = body.audio
       ? await sendEvolutionAudioMessage({ to: destinationPhone, audio: body.audio, mimeType: body.mimeType })
       : body.media && body.kind
         ? await sendEvolutionMediaMessage({
@@ -96,7 +80,7 @@ export async function POST(request: Request) {
         providerId,
         sentAt: new Date(),
         rawPayload: {
-          provider: usingMeta ? "meta" : "evolution",
+          provider: "evolution",
           instanceName: agent?.zapiInstanceId,
           kind: messageKind,
           media: body.media || body.audio ? { source: body.audio || body.media, kind: messageKind, mimeType: body.mimeType, fileName: body.fileName || (body.audio ? "audio" : undefined) } : undefined,

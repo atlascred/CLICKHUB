@@ -8,6 +8,7 @@ const publicRoutes = [
   "/api/auth/login",
   "/api/webhooks/zapi",
   "/api/whatsapp/webhook",
+  "/api/whatsapp/meta/webhook",
   "/api/whatsapp/broadcast/process",
 ];
 

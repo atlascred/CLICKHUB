@@ -1,279 +1,104 @@
 "use client";
-
-import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
-
-import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ImagePlus, Loader2, Megaphone, Send, TriangleAlert } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { BadgeCheck, Loader2, RefreshCw, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/utils/cn";
-
-type DispatchResult = {
-  total: number;
-  sent: number;
-  failed: number;
-  contacts: Array<{
-    phone: string;
-    status: "sent" | "failed";
-    detail: string;
-  }>;
-};
-
-const LAST_MASS_MESSAGE_RESULT_KEY = "clickhub:last-mass-message-result";
-
+import { templateFields, templateUnsupportedReason, type OfficialTemplate } from "../lib/templates";
+import type { Campaign, RecipientStatus } from "../services/mass-message.service";
+type Connection = { configured: boolean; missing: string[]; displayNumber: string; webhookPath: string; templates: OfficialTemplate[] };
+const labels: Record<RecipientStatus, string> = { queued: "Pendente", sending: "Processando", accepted: "Aceita pela Meta", delivered: "Entregue", read: "Lida", failed: "Falhou", uncertain: "Conferir na Meta" };
+async function api(path: string, body?: unknown) {
+  const response = await fetch(path, { ...(body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}), cache: "no-store" });
+  const payload = await response.json();
+  if (!response.ok || payload.status !== "success") throw new Error(payload.message || "Não foi possível consultar a campanha.");
+  return payload.data;
+}
 export function MassMessagePanel() {
-  const [agents,setAgents]=useState<Array<{id:string;instanceName:string}>>([]);
-  const [agentId,setAgentId]=useState("");
-  useEffect(()=>{fetch("/api/whatsapp/agents").then(r=>r.json()).then(r=>{if(r.status==="success")setAgents(r.data);}).catch(()=>{});},[]);
+  const [connection, setConnection] = useState<Connection | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [contacts, setContacts] = useState("");
-  const [message, setMessage] = useState("");
-  const [caption, setCaption] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [isSending, setIsSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<DispatchResult | null>(null);
-
-  const estimatedContacts = useMemo(() => {
-    const unique = new Set(
-      contacts
-        .split(/\r?\n|;|,/)
-        .map((item) => item.replace(/\D/g, ""))
-        .filter((item) => item.length >= 10),
-    );
-
-    return unique.size;
-  }, [contacts]);
-
+  const [templateId, setTemplateId] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [mediaUrl, setMediaUrl] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const requestId = useRef<string | null>(null);
+  const mounted = useRef(true);
+  const stop = useRef(false);
+  const selected = connection?.templates.find(t => t.id === templateId);
+  const unsupported = selected ? templateUnsupportedReason(selected) : "";
+  const fields = selected ? templateFields(selected) : [];
+  const header = selected?.components.find(c => c.type === "HEADER");
+  const needsMedia = header?.format && ["IMAGE", "VIDEO", "DOCUMENT"].includes(header.format);
+  const preview = selected?.components.filter(c => c.text).map(c => (c.text || "").replace(/\{\{\s*(\w+)\s*\}\}/g, (match, name) => values[`${c.type}:${name}`] || match)).join("\n\n");
+  async function refresh() {
+    setLoading(true); setError("");
+    try { setConnection(await api("/api/envio-em-massa")); } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
+  }
   useEffect(() => {
-    try {
-      setResult(null);
-      if(!agentId) return;
-      const stored = window.localStorage.getItem(`${LAST_MASS_MESSAGE_RESULT_KEY}:${agentId}`);
-      if (!stored) return;
-
-      const parsed = JSON.parse(stored) as DispatchResult;
-      if (
-        typeof parsed?.total === "number" &&
-        typeof parsed?.sent === "number" &&
-        typeof parsed?.failed === "number" &&
-        Array.isArray(parsed?.contacts)
-      ) {
-        setResult(parsed);
-      }
-    } catch {
-      window.localStorage.removeItem(`${LAST_MASS_MESSAGE_RESULT_KEY}:${agentId}`);
+    mounted.current = true;
+    void refresh();
+    const saved = window.sessionStorage.getItem("clickhub:official-meta-campaign");
+    if (saved) {
+      requestId.current = saved;
+      void api(`/api/envio-em-massa?id=${encodeURIComponent(saved)}`).then(data => { if (mounted.current) setCampaign(data); }).catch(() => {});
     }
-  }, [agentId]);
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!agentId) { setError("Selecione a instância de envio."); return; }
-    setIsSending(true);
-    setError(null);
-
-    try {
-      const formData = new FormData();
-      formData.set("agentId", agentId);
-      formData.set("contacts", contacts);
-      formData.set("message", message);
-      formData.set("caption", caption);
-      if (file) formData.set("file", file);
-
-      const response = await fetch("/api/envio-em-massa", {
-        method: "POST",
-        body: formData,
-      });
-      const payload = (await response.json()) as {
-        status: "success" | "error";
-        message: string;
-        data?: DispatchResult;
-      };
-
-      if (!response.ok || payload.status !== "success" || !payload.data) {
-        throw new Error(payload.message || "Não foi possível concluir o envio.");
-      }
-
-      setResult(payload.data);
-      window.localStorage.setItem(`${LAST_MASS_MESSAGE_RESULT_KEY}:${agentId}`, JSON.stringify(payload.data));
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Falha no envio em massa.");
-    } finally {
-      setIsSending(false);
+    return () => { mounted.current = false; stop.current = true; };
+  }, []);
+  function resetRequest() { requestId.current = null; setCampaign(null); window.sessionStorage.removeItem("clickhub:official-meta-campaign"); }
+  async function process(current: Campaign) {
+    let next = current;
+    while (mounted.current && !stop.current && next.recipients.some(r => ["queued", "sending"].includes(r.status))) {
+      if (next.recipients.some(r => r.status === "sending")) await new Promise(resolve => setTimeout(resolve, 1500));
+      if (stop.current || !mounted.current) break;
+      next = await api("/api/envio-em-massa", { action: "next", id: next.id });
+      if (mounted.current) setCampaign(next);
     }
   }
-
-  return (
-    <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="rounded-2xl bg-emerald-500/10 p-3 text-emerald-600">
-              <Megaphone className="h-5 w-5" />
-            </div>
-            <div>
-              <CardTitle>Disparo em massa no WhatsApp</CardTitle>
-              <CardDescription>
-                Envie mensagem, imagem, vídeo, áudio ou documento com descrição para vários contatos de uma vez.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form className="space-y-5" onSubmit={handleSubmit}>
-            <label className="grid gap-2 text-sm font-medium">WhatsApp de envio<select required disabled={isSending} className="h-10 rounded-md border bg-background px-3" value={agentId} onChange={event=>setAgentId(event.target.value)}><option value="">Selecione NIO FIBRA ou VIVO FIBRA</option>{agents.map(agent=><option key={agent.id} value={agent.id}>{whatsappAgentLabel(agent.instanceName)}</option>)}</select></label>
-            <div className="grid gap-2">
-              <p className="text-sm font-medium">Contatos</p>
-              <Textarea
-                value={contacts}
-                onChange={(event) => setContacts(event.target.value)}
-                placeholder={"Cole um número por linha\n5511999999999\n5511988887777"}
-                className="min-h-44"
-              />
-              <p className="text-xs text-muted-foreground">
-                Você pode separar por linha, vírgula ou ponto e vírgula. Contatos detectados: <strong>{estimatedContacts}</strong>
-              </p>
-            </div>
-
-            <div className="grid gap-5 lg:grid-cols-2">
-              <div className="grid gap-2">
-                <p className="text-sm font-medium">Mensagem de texto</p>
-                <Textarea
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                  placeholder="Digite a mensagem que será disparada para todos os contatos."
-                  className="min-h-36"
-                />
-              </div>
-              <div className="grid gap-4">
-                <div className="grid gap-2">
-                  <p className="text-sm font-medium">Descrição da mídia</p>
-                  <Textarea
-                    value={caption}
-                    onChange={(event) => setCaption(event.target.value)}
-                    placeholder="Legenda opcional para imagem, vídeo ou documento."
-                    className="min-h-24"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <p className="text-sm font-medium">Anexo</p>
-                  <Input
-                    type="file"
-                    accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
-                    onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                  />
-                  <div className="rounded-lg border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
-                    {file ? (
-                      <span>
-                        Arquivo selecionado: <strong>{file.name}</strong>
-                      </span>
-                    ) : (
-                      <span>Envie imagem, vídeo, áudio ou documento para disparar junto com a descrição.</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {error ? (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {error}
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Button type="submit" disabled={isSending}>
-                {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                {isSending ? "Enviando..." : "Disparar mensagens"}
-              </Button>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <ImagePlus className="h-4 w-4" />
-                O envio usa a instância selecionada e registra as mensagens no histórico correspondente. Arquivos de até 3 MB; até 100 contatos por lote.
-              </div>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      <div className="space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Boas práticas</CardTitle>
-            <CardDescription>Evite bloqueios e mantenha uma abordagem mais humana no disparo.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p>1. Use listas segmentadas e números com consentimento.</p>
-            <p>2. Prefira mensagens curtas, claras e com CTA direto.</p>
-            <p>3. Para mídia, use uma descrição curta e objetiva.</p>
-            <p>4. Revise os contatos antes de disparar.</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Resultado do último envio</CardTitle>
-            <CardDescription>Resumo rápido do lote processado.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {result ? (
-              <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-3">
-                  <ResultMetric label="Total" value={String(result.total)} tone="slate" />
-                  <ResultMetric label="Enviadas" value={String(result.sent)} tone="emerald" />
-                  <ResultMetric label="Falhas" value={String(result.failed)} tone="rose" />
-                </div>
-
-                <div className="space-y-2">
-                  {result.contacts.map((contact) => (
-                    <div key={`${contact.phone}-${contact.status}`} className="flex items-start justify-between gap-3 rounded-lg border p-3 text-sm">
-                      <div>
-                        <p className="font-medium">{contact.phone}</p>
-                        <p className="text-xs text-muted-foreground">{contact.detail}</p>
-                      </div>
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold",
-                          contact.status === "sent"
-                            ? "bg-emerald-500/10 text-emerald-700"
-                            : "bg-rose-500/10 text-rose-700",
-                        )}
-                      >
-                        {contact.status === "sent" ? (
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                        ) : (
-                          <TriangleAlert className="h-3.5 w-3.5" />
-                        )}
-                        {contact.status === "sent" ? "Enviado" : "Falhou"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                Faça um disparo para ver o resumo de sucesso e falha aqui.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function ResultMetric({ label, value, tone }: { label: string; value: string; tone: "slate" | "emerald" | "rose" }) {
-  const toneClass =
-    tone === "emerald"
-      ? "bg-emerald-500/10 text-emerald-700"
-      : tone === "rose"
-        ? "bg-rose-500/10 text-rose-700"
-        : "bg-slate-500/10 text-slate-700";
-
-  return (
-    <div className={cn("rounded-xl border px-4 py-3", toneClass)}>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em]">{label}</p>
-      <p className="mt-2 text-2xl font-bold">{value}</p>
-    </div>
-  );
+  async function submit(event?: React.FormEvent) {
+    event?.preventDefault();
+    if (busy) return;
+    setBusy(true); setError(""); stop.current = false;
+    try {
+      let current = campaign;
+      if (!current) {
+        requestId.current ||= crypto.randomUUID();
+        window.sessionStorage.setItem("clickhub:official-meta-campaign", requestId.current);
+        current = await api("/api/envio-em-massa", { action: "create", id: requestId.current, contacts, templateId, values, mediaUrl, consent }) as Campaign;
+        setCampaign(current);
+      }
+      await process(current);
+    } catch (e) { setError((e as Error).message); } finally { if (mounted.current) setBusy(false); }
+  }
+  async function refreshCampaign() {
+    if (!campaign) return;
+    try { setCampaign(await api(`/api/envio-em-massa?id=${encodeURIComponent(campaign.id)}`)); } catch (e) { setError((e as Error).message); }
+  }
+  return <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+    <Card className="min-w-0"><CardHeader><div className="flex items-center gap-3"><div className="rounded-2xl bg-emerald-500/10 p-3 text-emerald-600"><BadgeCheck className="h-6 w-6" /></div><div><CardTitle>WhatsApp Oficial</CardTitle><CardDescription>Campanhas com modelos aprovados pela Meta.</CardDescription></div></div></CardHeader>
+      <CardContent className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"><div className="text-sm font-medium">{loading ? "Consultando conexão..." : connection?.configured ? `Conexão configurada${connection.displayNumber ? ` · ${connection.displayNumber}` : ""}` : "Aguardando cadastro do número oficial"}</div><Button type="button" variant="outline" size="sm" disabled={loading || busy} onClick={() => void refresh()}><RefreshCw className="h-4 w-4" />Atualizar conexão</Button></div>
+        {connection && !connection.configured ? <div className="space-y-3 rounded-xl border border-amber-400/30 bg-amber-500/5 p-5 text-sm"><p className="font-semibold">Cadastre seu WhatsApp na Meta para começar</p><ol className="list-decimal space-y-2 pl-5"><li>Cadastre a empresa e o número na plataforma oficial.</li><li>Conecte as credenciais da conta ao CLICKHUB.</li><li>Crie um modelo de mensagem e aguarde a aprovação da Meta.</li></ol><a className="inline-block font-medium text-primary underline" href="https://business.facebook.com/latest/whatsapp_manager" target="_blank" rel="noreferrer">Abrir WhatsApp Manager</a><p className="text-muted-foreground">Depois da configuração, clique em Atualizar conexão para carregar seus modelos.</p></div> : null}
+        {error ? <div role="alert" className="rounded-lg border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-600">{error}</div> : null}
+        <form onSubmit={submit} className="space-y-5"><fieldset style={{ minWidth: 0 }} disabled={loading || !connection?.configured || busy || Boolean(campaign)} className="space-y-5 disabled:opacity-60">
+          <label className="grid gap-2 text-sm font-medium">Modelo aprovado<select required className="h-11 w-full min-w-0 rounded-md border bg-background px-3" value={templateId} onChange={e => { setTemplateId(e.target.value); setValues({}); setMediaUrl(""); requestId.current = null; }}><option value="">Selecione um modelo</option>{connection?.templates.map(t => <option key={t.id} value={t.id} disabled={Boolean(templateUnsupportedReason(t))}>{t.name} · {t.language}{templateUnsupportedReason(t) ? " (não compatível)" : ""}</option>)}</select></label>
+          {connection?.configured && !connection.templates.length ? <p className="text-sm text-muted-foreground">Nenhum modelo aprovado encontrado. Crie seu modelo no WhatsApp Manager e atualize a conexão.</p> : null}
+          {unsupported ? <p className="text-sm text-amber-600">{unsupported}</p> : null}
+          {fields.map(field => <label className="grid gap-2 text-sm" key={field.key}>Variável {`{{${field.name}}}`} · {field.component === "header" ? "Cabeçalho" : "Mensagem"}<Input required maxLength={1024} value={values[field.key] || ""} onChange={e => { setValues(v => ({ ...v, [field.key]: e.target.value })); requestId.current = null; }} /></label>)}
+          {needsMedia ? <label className="grid gap-2 text-sm">Link HTTPS da {header?.format === "IMAGE" ? "imagem" : header?.format === "VIDEO" ? "mídia de vídeo" : "mídia do documento"}<Input type="url" required placeholder="https://..." value={mediaUrl} onChange={e => { setMediaUrl(e.target.value); requestId.current = null; }} /><span className="text-xs text-muted-foreground">A mídia precisa estar acessível à Meta e corresponder ao cabeçalho aprovado.</span></label> : null}
+          <label className="grid gap-2 text-sm font-medium">Contatos<Textarea required className="min-h-44" placeholder={"Cole um número por linha\n5511999999999"} value={contacts} onChange={e => { setContacts(e.target.value); requestId.current = null; }} /><span className="text-xs font-normal text-muted-foreground">Até 100 contatos por campanha. Números repetidos são removidos.</span></label>
+          <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={consent} onChange={e => setConsent(e.target.checked)} required /><span>Os contatos autorizaram receber estas mensagens pelo WhatsApp.</span></label>
+        </fieldset>
+        {!campaign ? <Button type="submit" disabled={busy || loading || !connection?.configured || !selected || Boolean(unsupported) || !consent}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}Enviar pela Meta</Button> : null}
+        </form>
+        {campaign ? <div className="flex flex-wrap gap-2">{busy ? <Button variant="outline" onClick={() => { stop.current = true; }}>Pausar após o contato atual</Button> : <>{campaign.recipients.some(r => ["queued", "sending"].includes(r.status)) ? <Button disabled={!connection?.configured} onClick={() => void submit()}>Continuar pendentes</Button> : null}<Button variant="outline" onClick={resetRequest}>Nova campanha</Button></>}</div> : null}
+        <p className="text-xs text-muted-foreground">Mantenha esta tela aberta durante o envio. Ao pausar ou sair, os contatos pendentes ficam salvos para continuar depois.</p>
+      </CardContent></Card>
+    <div className="min-w-0 space-y-6"><Card className="min-w-0"><CardHeader><CardTitle>Prévia da mensagem</CardTitle><CardDescription>{selected ? `${selected.name} · ${selected.language}` : "Selecione um modelo para visualizar."}</CardDescription></CardHeader><CardContent><div className="whitespace-pre-wrap break-words rounded-xl border bg-emerald-500/5 p-5 text-sm">{preview || "Seu modelo aparecerá aqui."}</div></CardContent></Card>
+    <Card className="min-w-0"><CardHeader><CardTitle>Resultado da campanha</CardTitle><CardDescription>Aceita pela Meta indica recebimento pela API. Entrega e leitura dependem da confirmação do WhatsApp.</CardDescription></CardHeader><CardContent className="space-y-4">{campaign ? <><div className="grid grid-cols-3 gap-2 text-center text-sm">{[["Total", campaign.recipients.length], ["Aceitas / entregues", campaign.recipients.filter(r => ["accepted", "delivered", "read"].includes(r.status)).length], ["Pendentes", campaign.recipients.filter(r => ["queued", "sending"].includes(r.status)).length]].map(([label, value]) => <div className="rounded-lg border p-3" key={label}><p className="text-xl font-semibold">{value}</p><p className="text-xs text-muted-foreground">{label}</p></div>)}</div><Button variant="outline" size="sm" disabled={busy} onClick={() => void refreshCampaign()}><RefreshCw className="h-4 w-4" />Atualizar resultado</Button><div className="max-h-96 space-y-2 overflow-y-auto">{campaign.recipients.map(r => <div key={r.phone} className="rounded-lg border p-3 text-sm"><div className="flex justify-between gap-2"><span>{r.phone}</span><span className={r.status === "failed" || r.status === "uncertain" ? "text-amber-600" : "text-emerald-600"}>{labels[r.status]}</span></div>{r.detail ? <p className="mt-1 text-xs text-muted-foreground">{r.detail}</p> : null}</div>)}</div></> : <p className="text-sm text-muted-foreground">Os resultados aparecerão aqui após iniciar uma campanha oficial.</p>}</CardContent></Card></div>
+  </div>;
 }

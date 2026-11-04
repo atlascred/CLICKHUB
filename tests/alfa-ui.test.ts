@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { conversationAgentWhere, leadSourceWhere, resolveLeadAgentScope } from '../src/lib/lead-source-access';
 import { InboxService } from '../src/modules/conversas/services/inbox.service';
 import { InboxRepository } from '../src/repositories/inbox.repository';
-import { MassMessageService } from '../src/modules/envio-em-massa/services/mass-message.service';
+import { campaignContacts } from '../src/modules/envio-em-massa/services/mass-message.service';
 const admin:any={id:'admin',role:'ADMIN',permissions:{}};
 const employee:any={id:'employee',role:'EMPLOYEE',permissions:{'leads.onlyClick':true}};
 test('filtros usam vínculos CLICK/GIGA reais, sem mudar source do chatbot',()=>{
@@ -41,19 +41,12 @@ test('atribuição de responsável valida usuário e proíbe encaminhamento inde
  await assert.rejects(f.service.assignOwner('conversation','admin',employee),/FORBIDDEN/);
  assert.equal(f.stats().ownerWrites,0);
 });
-test('envio em massa normaliza duplicatas e registra falha por contato sem repetir',async()=>{
- const calls:any[]=[];
- const service=new MassMessageService(async(phone,payload)=>{calls.push({phone,payload});if(phone.endsWith('1'))throw new Error('falha simulada');});
- const result=await service.send({contactsText:'(11) 90000-0000;5511900000000\n5511900000001',message:'Teste simulado'});
- assert.equal(result.total,2);assert.equal(result.sent,1);assert.equal(result.failed,1);assert.equal(calls.length,2);
- assert.deepEqual(calls[0].payload,{message:'Teste simulado'});
-});
-test('envio em massa valida dados antes de qualquer envio e traduz tipos de mídia',async()=>{
- const calls:any[]=[];const service=new MassMessageService(async(phone,payload)=>{calls.push({phone,payload});});
- await assert.rejects(service.send({contactsText:'inválido',message:'oi'}));
- await assert.rejects(service.send({contactsText:'5511900000000'}));assert.equal(calls.length,0);
- await service.send({contactsText:'5511900000000',caption:'Documento',media:{fileName:'teste.pdf',mimeType:'application/pdf',dataUrl:'data:application/pdf;base64,eA=='}});
- assert.equal(calls[0].payload.kind,'documento');assert.equal(calls[0].payload.message,'Documento');
+test('campanha oficial normaliza números e rejeita contatos inválidos sem ignorá-los',()=>{
+ assert.deepEqual(campaignContacts('(11) 90000-0000;5511900000000\n5511900000001'), ['5511900000000','5511900000001']);
+ assert.throws(()=>campaignContacts('inválido'));
+ assert.throws(()=>campaignContacts('5511900000000;inválido'));
+ assert.throws(()=>campaignContacts(''));
+ assert.throws(()=>campaignContacts(Array.from({length:101},(_,i)=>'55119'+String(i).padStart(8,'0')).join('\n')));
 });
 test('novas abas apontam para adaptadores; não importam automação Alfa',()=>{
  const ui=readFileSync('src/modules/conversas/components/conversation-center.tsx','utf8');
