@@ -1,3 +1,4 @@
+import { InstallApp } from "@/components/pwa/install-app";
 import { Suspense } from "react";
 import { ArrowUpRight, ChartNoAxesCombined, MessageCircleMore, ShieldCheck, Users } from "lucide-react";
 import { BrandLogo } from "@/components/layout/brand-logo";
@@ -33,6 +34,7 @@ export default function LoginPage() {
           <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_12px_40px_#12336708] sm:p-7">
             <Suspense fallback={<div role="status" className="h-64 rounded-xl bg-slate-50 p-5 text-sm text-slate-500">Carregando acesso...</div>}><LoginForm /></Suspense>
           </div>
+          <InstallApp compact />
           <p className="mt-6 text-center text-xs leading-6 text-slate-500">Precisa de acesso ou esqueceu sua senha?<br /><span className="font-semibold text-slate-700">Fale com o administrador da sua equipe.</span></p>
           <div className="mt-10 flex items-center justify-center gap-2 border-t border-slate-200 pt-6 text-[10px] font-medium tracking-wide text-slate-400"><ShieldCheck className="h-3.5 w-3.5" />CLICKHUB · Acesso exclusivo para sua equipe</div>
         </div>

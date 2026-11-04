@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, KeyRound, Moon, Save, ShieldCheck, Sun, UserRound } from "lucide-react";
 import { useTheme } from "next-themes";
+import { InstallApp } from "@/components/pwa/install-app";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -70,6 +71,7 @@ export function SettingsPanel() {
 
   return <div className={`grid gap-4 ${isAdmin ? "xl:grid-cols-[1.1fr_0.9fr]" : "max-w-xl"}`}>
     <div className="space-y-4">
+      <InstallApp />
       {isAdmin ? <Card><CardHeader><CardTitle className="flex items-center gap-2"><UserRound className="h-5 w-5" />Meu perfil</CardTitle><CardDescription>Nome e e-mail utilizados para acessar o sistema</CardDescription></CardHeader><CardContent>
         <form key={`${user.data?.name}-${user.data?.email}`} className="space-y-4" onSubmit={saveProfile}>
           <div className="grid gap-3 sm:grid-cols-2"><label className="space-y-1 text-sm"><span>Nome completo</span><Input name="name" defaultValue={user.data?.name ?? ""} required /></label><label className="space-y-1 text-sm"><span>Login de acesso (e-mail)</span><Input name="email" type="email" defaultValue={user.data?.email ?? ""} required /></label></div>
