@@ -3,7 +3,7 @@ import { leadSourceLabel } from "@/modules/leads/types/lead-source";
 import { buildLeadCopyText, type LeadCopyKind } from "@/modules/leads/clipboard";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarClock, Check, FileSearch, Download, Eye, FileUp, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, GripVertical, CalendarClock, Check, FileSearch, Download, Eye, FileUp, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -129,6 +129,8 @@ export function LeadBoard() {
   const [saving, setSaving] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const pendingUpdates = useRef(new Map<string, Promise<void>>());
+  const orderingStages = useRef(false);
+  const [savingStageOrder, setSavingStageOrder] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newStageName, setNewStageName] = useState("");
   const [detail, setDetail] = useState<LeadDetail | null>(null);
@@ -295,6 +297,37 @@ export function LeadBoard() {
     }
   }
 
+  async function reorderStages(sourceId: string, targetId: string) {
+    const previous = stages.data;
+    if (orderingStages.current || !previous || sourceId === targetId) return;
+    const sourceIndex = previous.findIndex(stage => stage.id === sourceId);
+    const targetIndex = previous.findIndex(stage => stage.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const next = [...previous];
+    const [moved] = next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, moved);
+    orderingStages.current = true;
+    setSavingStageOrder(true);
+    setUpdateError(null);
+    stages.setData(next);
+    try {
+      const response = await fetch("/api/lead-stages/order", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: next.map(stage => stage.id) }),
+      });
+      const result = (await response.json()) as ApiResult<LeadStage[]>;
+      if (!response.ok || result.status !== "success" || !Array.isArray(result.data)) throw new Error(result.message || "Não foi possível salvar a ordem das categorias.");
+      stages.setData(result.data);
+    } catch (error) {
+      stages.setData(previous);
+      setUpdateError(error instanceof Error ? error.message : "Não foi possível salvar a ordem das categorias.");
+    } finally {
+      orderingStages.current = false;
+      setSavingStageOrder(false);
+    }
+  }
+
   async function deleteStage(id: string) {
     const response = await fetch(`/api/lead-stages/${id}`, { method: "DELETE" });
     if (response.ok) {
@@ -417,6 +450,9 @@ export function LeadBoard() {
             users={users.data ?? []}
             plans={activePlans}
             stages={kanbanStages}
+            canReorder={Boolean(stages.data?.length && (currentUser?.role === "ADMIN" || currentUser?.permissions["leads:edit"]))}
+            savingOrder={savingStageOrder}
+            onReorder={reorderStages}
             newStageName={newStageName}
             onNewStageNameChange={setNewStageName}
             onCreateStage={createStage}
@@ -484,6 +520,9 @@ function KanbanView({
   users,
   plans,
   stages,
+  canReorder,
+  savingOrder,
+  onReorder,
   newStageName,
   onNewStageNameChange,
   onCreateStage,
@@ -498,6 +537,9 @@ function KanbanView({
   users: UserOption[];
   plans: PlanOption[];
   stages: LeadStage[];
+  canReorder: boolean;
+  savingOrder: boolean;
+  onReorder: (sourceId: string, targetId: string) => Promise<void>;
   newStageName: string;
   onNewStageNameChange: (value: string) => void;
   onCreateStage: () => Promise<void>;
@@ -521,7 +563,7 @@ function KanbanView({
         </Button>
       </div>
       <div role="region" aria-label="Etapas do Kanban de leads" tabIndex={0} className="flex w-full max-w-full gap-4 overflow-x-auto overscroll-x-contain pb-3">
-      {stages.map((column) => {
+      {stages.map((column, index) => {
         const columnLeads = leads.filter((lead) =>
           lead.kanbanStageId ? lead.kanbanStageId === column.id : lead.status === column.status,
         );
@@ -532,13 +574,23 @@ function KanbanView({
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               event.preventDefault();
+              const stageId = event.dataTransfer.getData("application/x-clickhub-stage");
+              if (stageId) {
+                if (canReorder && !savingOrder) void onReorder(stageId, column.id);
+                return;
+              }
               const leadId = event.dataTransfer.getData("text/plain");
-              if (leadId) void onUpdate(leadId, { kanbanStageId: column.id });
+              if (leadId && !leadId.startsWith("stage:")) void onUpdate(leadId, { kanbanStageId: column.id });
             }}
           >
             <CardHeader className="shrink-0 p-4">
               <StageHeader
                 stage={column}
+                canReorder={canReorder}
+                savingOrder={savingOrder}
+                previousStageId={stages[index - 1]?.id}
+                nextStageId={stages[index + 1]?.id}
+                onReorder={onReorder}
                 count={columnLeads.length}
                 onUpdateStage={onUpdateStage}
                 onDeleteStage={onDeleteStage}
@@ -575,11 +627,21 @@ function KanbanView({
 function StageHeader({
   stage,
   count,
+  canReorder,
+  savingOrder,
+  previousStageId,
+  nextStageId,
+  onReorder,
   onUpdateStage,
   onDeleteStage,
 }: {
   stage: LeadStage;
   count: number;
+  canReorder: boolean;
+  savingOrder: boolean;
+  previousStageId?: string;
+  nextStageId?: string;
+  onReorder: (sourceId: string, targetId: string) => Promise<void>;
   onUpdateStage: (id: string, name: string) => Promise<void>;
   onDeleteStage: (id: string) => Promise<void>;
 }) {
@@ -593,23 +655,41 @@ function StageHeader({
 
   return (
     <CardTitle className="flex items-center justify-between gap-2 text-sm">
+      {canReorder ? <button
+        type="button"
+        draggable={!savingOrder}
+        disabled={savingOrder}
+        aria-label={`Arrastar categoria ${stage.name}`}
+        title="Arraste para organizar as categorias"
+        className="shrink-0 cursor-grab rounded p-1 text-muted-foreground hover:bg-muted active:cursor-grabbing disabled:opacity-40"
+        onDragStart={event => {
+          event.stopPropagation();
+          event.dataTransfer.setData("application/x-clickhub-stage", stage.id);
+          event.dataTransfer.setData("text/plain", `stage:${stage.id}`);
+          event.dataTransfer.effectAllowed = "move";
+        }}
+      ><GripVertical className="h-4 w-4" aria-hidden="true" /></button> : null}
       {editing ? (
-        <Input className="h-8" value={name} onChange={(event) => setName(event.target.value)} />
+        <Input className="h-8 min-w-0" value={name} onChange={(event) => setName(event.target.value)} />
       ) : (
-        <span className="truncate">{stage.name}</span>
+        <span className="min-w-0 flex-1 truncate">{stage.name}</span>
       )}
       <div className="flex shrink-0 items-center gap-1">
         <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{count}</span>
+        {canReorder ? <>
+          <Button aria-label={`Mover categoria ${stage.name} para a esquerda`} title="Mover categoria para a esquerda" className="h-7 w-7 p-0" size="sm" variant="ghost" type="button" disabled={savingOrder || !previousStageId} onClick={() => previousStageId && void onReorder(stage.id, previousStageId)}><ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" /></Button>
+          <Button aria-label={`Mover categoria ${stage.name} para a direita`} title="Mover categoria para a direita" className="h-7 w-7 p-0" size="sm" variant="ghost" type="button" disabled={savingOrder || !nextStageId} onClick={() => nextStageId && void onReorder(stage.id, nextStageId)}><ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Button>
+        </> : null}
         {editing ? (
-          <Button aria-label="Salvar etapa" size="sm" variant="ghost" type="button" onClick={save}>
+          <Button aria-label="Salvar etapa" className="h-7 w-7 p-0" size="sm" variant="ghost" type="button" onClick={save}>
             <Check className="h-4 w-4" aria-hidden="true" />
           </Button>
         ) : (
-          <Button aria-label="Editar etapa" size="sm" variant="ghost" type="button" onClick={() => setEditing(true)}>
+          <Button aria-label="Editar etapa" className="h-7 w-7 p-0" size="sm" variant="ghost" type="button" onClick={() => setEditing(true)}>
             <Pencil className="h-4 w-4" aria-hidden="true" />
           </Button>
         )}
-        <Button aria-label="Excluir etapa" size="sm" variant="ghost" type="button" onClick={() => onDeleteStage(stage.id)}>
+        <Button aria-label="Excluir etapa" className="h-7 w-7 p-0" size="sm" variant="ghost" type="button" onClick={() => onDeleteStage(stage.id)}>
           <Trash2 className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
