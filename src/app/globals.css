@@ -139,3 +139,42 @@ select,
 textarea {
   font: inherit;
 }
+
+/* Phone layouts share the same data and permissions as the desktop workspace. */
+@media (max-width: 767px) {
+  .crm-main, .crm-main > *, .crm-main .grid > *, .crm-main .crm-card { min-width: 0; }
+  .crm-main { padding-top: 16px; padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+  .crm-mobile-nav { padding-bottom: max(4px, env(safe-area-inset-bottom)); }
+  .crm-main .crm-card { border-radius: 18px; }
+  .crm-main .crm-card-heading { padding: 16px; }
+  .crm-main input:not([type="checkbox"]):not([type="radio"]),
+  .crm-main select { min-height: 44px; max-width: 100%; }
+  .crm-main textarea { max-width: 100%; }
+  .crm-main button { min-height: 44px; touch-action: manipulation; }
+  .crm-main button[aria-label] { min-width: 44px; }
+  .crm-main p, .crm-main dd { overflow-wrap: anywhere; }
+  .wa-inbox { height: calc(100dvh - 140px - env(safe-area-inset-bottom)); }
+  .crm-mobile-table, .crm-mobile-table tbody { display: block; min-width: 0; width: 100%; background: transparent; }
+  .crm-mobile-table thead { display: none; }
+  .crm-mobile-table tbody { padding: 12px; }
+  .crm-mobile-table tr { display: block; margin-bottom: 12px; padding: 14px; border: 1px solid hsl(var(--border)); border-radius: 16px; background: hsl(var(--card)); }
+  .crm-mobile-table tr:last-child { margin-bottom: 0; }
+  .crm-mobile-table td { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; font-size: 13px; overflow-wrap: anywhere; }
+  .crm-mobile-table td > * { min-width: 0; max-width: 100%; }
+  .crm-mobile-table td[data-label]::before { content: attr(data-label); flex-shrink: 0; color: hsl(var(--muted-foreground)); font-size: 11px; }
+  .crm-mobile-table td[colspan] { justify-content: center; padding-block: 20px; }
+  .crm-mobile-table td select { min-width: 0; width: 100%; }
+  .crm-mobile-table td[data-label] select { width: min(66%, 230px); }
+}
+@media (max-width: 767px) {
+  .crm-mobile-table td.hidden { display: none; }
+  .crm-mobile-table td:first-child:not([data-label]) { font-weight: 600; }
+  .crm-main .crm-mobile-table + * { min-width: 0; }
+}
+@media (max-width: 767px) {
+  [role="dialog"] input:not([type="checkbox"]):not([type="radio"]),
+  [role="dialog"] textarea, [role="dialog"] select { font-size: 16px; min-height: 44px; max-width: 100%; }
+  [role="dialog"] .grid > * { min-width: 0; }
+  [role="dialog"] button { min-height: 44px; }
+  [role="dialog"] input[type="checkbox"], [role="dialog"] input[type="radio"] { min-width: 18px; min-height: 18px; }
+}

@@ -1,0 +1,7 @@
+"use client";
+import * as Dialog from "@radix-ui/react-dialog";
+import { X } from "lucide-react";
+import type { ReactNode } from "react";
+export function BottomSheet({ open, onOpenChange, title, description, children }: { open: boolean; onOpenChange: (open: boolean) => void; title: string; description?: string; children: ReactNode }) {
+  return <Dialog.Root open={open} onOpenChange={onOpenChange}><Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-sm" /><Dialog.Content className="fixed inset-x-0 bottom-0 z-50 flex max-h-[90dvh] flex-col rounded-t-3xl border bg-card shadow-2xl sm:inset-x-auto sm:left-1/2 sm:w-full sm:max-w-lg sm:-translate-x-1/2"><div aria-hidden="true" className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/25" /><div className="flex shrink-0 items-center justify-between gap-4 px-5 py-4"><div className="min-w-0"><Dialog.Title className="text-lg font-bold">{title}</Dialog.Title>{description ? <Dialog.Description className="mt-1 text-sm text-muted-foreground">{description}</Dialog.Description> : <Dialog.Description className="sr-only">Opções de {title.toLowerCase()}.</Dialog.Description>}</div><Dialog.Close aria-label={`Fechar ${title.toLowerCase()}`} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-muted"><X className="h-5 w-5" /></Dialog.Close></div><div className="min-h-0 overflow-y-auto overscroll-contain px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))]">{children}</div></Dialog.Content></Dialog.Portal></Dialog.Root>;
+}

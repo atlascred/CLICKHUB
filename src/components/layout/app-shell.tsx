@@ -29,7 +29,7 @@ export function AppShell({ title, children }: AppShellProps) {
         <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
         <div className={`min-h-screen ${collapsed ? "md:pl-20" : "md:pl-64"}`}>
           <Header title={title} />
-          <main className={isInbox ? "w-full p-2 sm:p-3" : "crm-main mx-auto w-full max-w-[1600px] px-4 py-6 pb-28 sm:px-6 md:pb-8 lg:px-8"}>
+          <main className={isInbox ? "w-full p-2 sm:p-3" : "crm-main mx-auto w-full max-w-[1600px] min-w-0 px-4 py-4 pb-28 sm:px-6 md:py-6 md:pb-8 lg:px-8"}>
             {children}
           </main>
         </div>

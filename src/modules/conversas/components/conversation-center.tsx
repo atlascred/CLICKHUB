@@ -7,11 +7,20 @@ import type { MessageAttachment } from "@/lib/whatsapp-media";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, MessageCircleMore, Filter, Mic, Paintbrush, Paperclip, Plus, Search, Send, Square, Trash2, UserCheck, Undo2, X } from "lucide-react";
+import { AppDialog } from "@/components/ui/app-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/hooks/use-current-user";
+
+const conversationStageLabels: Record<string, string> = {
+  START: "Início", ASK_CEP: "Verificando cobertura", ASK_STREET_NUMBER: "Número do imóvel",
+  ASK_COMPLEMENT: "Complemento", CHOOSE_PLAN: "Escolha do plano", ASK_NAME: "Nome do cliente",
+  ASK_DOCUMENT: "Documento", ASK_BIRTH_DATE: "Nascimento", ASK_EMAIL: "E-mail",
+  ASK_BILLING_DUE_DAY: "Vencimento", CONFIRM_DATA: "Confirmação dos dados",
+  FINISHED: "Finalizado", FINISHED_UNAVAILABLE: "Sem cobertura", MANUAL: "Atendimento humano", BLOCKED: "Bloqueado",
+};
 
 type ConversationUser = {
   id: string;
@@ -816,7 +825,7 @@ export function ConversationCenter() {
                   <div>
                     <div className="flex items-center gap-2"><Button type="button" variant="ghost" size="icon" className="lg:hidden" aria-label="Voltar às conversas" onClick={() => setMobileChatOpen(false)}><ArrowLeft className="h-4 w-4" /></Button><span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">{(detail.lead?.name ?? detail.contactName ?? detail.phone).slice(0, 2).toUpperCase()}</span><CardTitle>{detail.lead?.name ?? detail.contactName ?? detail.phone}</CardTitle></div>
                     <CardDescription>
-                      {detail.phone} • Etapa atual: {detail.state} • {detail.agent?.name ?? "Lily"}
+                      {detail.phone} • {conversationStageLabels[detail.state] ?? "Em atendimento"}
                     </CardDescription>
                   </div>
                   <details className="relative">
@@ -1165,17 +1174,5 @@ function tagDotClasses(color: string) {
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-md border bg-background shadow-2xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-5 py-4">
-          <h2 className="font-semibold">{title}</h2>
-          <Button type="button" size="icon" variant="ghost" onClick={onClose}>
-            <X className="h-5 w-5" />
-          </Button>
-        </div>
-        <div className="p-5">{children}</div>
-      </div>
-    </div>
-  );
+  return <AppDialog title={title} onClose={onClose} className="md:max-w-2xl">{children}</AppDialog>;
 }

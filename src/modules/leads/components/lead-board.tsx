@@ -3,12 +3,16 @@ import { leadSourceLabel } from "@/modules/leads/types/lead-source";
 import { buildLeadCopyText, type LeadCopyKind } from "@/modules/leads/clipboard";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, GripVertical, CalendarClock, Check, FileSearch, Download, Eye, FileUp, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, GripVertical, SlidersHorizontal, CalendarClock, Check, FileSearch, Download, Eye, FileUp, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
+import { AppDialog } from "@/components/ui/app-dialog";
+import { ActionMenu } from "@/components/ui/action-menu";
+import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useApiResource } from "@/hooks/use-api-resource";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import type { ApiResult } from "@/types/api";
@@ -117,6 +121,7 @@ const LEADS_PER_PAGE = 25;
 
 export function LeadBoard() {
   const searchParams = useSearchParams();
+  const isMobile = useMediaQuery("(max-width: 767px)");
   const { data: currentUser } = useCurrentUser();
   const [agentScope, setAgentScope] = useState<AgentScope>("both");
   const { data, loading, error, refresh, setData: setLeads } = useApiResource<LeadListItem[]>(`/api/leads?agent=${agentScope}`);
@@ -124,6 +129,7 @@ export function LeadBoard() {
   const plans = useApiResource<PlanOption[]>("/api/plans");
   const stages = useApiResource<LeadStage[]>("/api/lead-stages");
   const [query, setQuery] = useState("");
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState(searchParams.get("status") ?? "");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [saving, setSaving] = useState(false);
@@ -297,6 +303,15 @@ export function LeadBoard() {
     }
   }
 
+  function revealStage(id: string) {
+    if (!window.matchMedia("(max-width: 767px)").matches) return;
+    requestAnimationFrame(() => {
+      const column = document.querySelector<HTMLElement>(`[data-kanban-stage="${CSS.escape(id)}"]`);
+      const board = column?.parentElement;
+      if (column && board) board.scrollTo({ left: board.scrollLeft + column.getBoundingClientRect().left - board.getBoundingClientRect().left, behavior: "smooth" });
+    });
+  }
+
   async function reorderStages(sourceId: string, targetId: string) {
     const previous = stages.data;
     if (orderingStages.current || !previous || sourceId === targetId) return;
@@ -319,8 +334,10 @@ export function LeadBoard() {
       const result = (await response.json()) as ApiResult<LeadStage[]>;
       if (!response.ok || result.status !== "success" || !Array.isArray(result.data)) throw new Error(result.message || "Não foi possível salvar a ordem das categorias.");
       stages.setData(result.data);
+      revealStage(sourceId);
     } catch (error) {
       stages.setData(previous);
+      revealStage(sourceId);
       setUpdateError(error instanceof Error ? error.message : "Não foi possível salvar a ordem das categorias.");
     } finally {
       orderingStages.current = false;
@@ -361,7 +378,19 @@ export function LeadBoard() {
   return (
     <div className="space-y-4">
       <div className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-[auto_1fr_auto_auto_auto]">
+        <div className="sticky top-14 z-20 -mx-4 space-y-3 border-b border-border/60 bg-background/95 px-4 pb-3 pt-1 backdrop-blur-xl md:hidden">
+          <div className="flex items-center gap-2"><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" /><Input aria-label="Pesquisar leads" className="h-12 rounded-2xl bg-card pl-10" placeholder="Buscar leads" value={query} onChange={event => setQuery(event.target.value)} /></div><Button type="button" variant="outline" size="icon" className={`h-12 w-12 shrink-0 rounded-2xl ${statusFilter || agentScope !== "both" ? "border-primary/30 bg-primary/10 text-primary" : ""}`} aria-label="Filtrar leads" onClick={() => setMobileFiltersOpen(true)}><SlidersHorizontal className="h-5 w-5" /></Button><ActionMenu label="Opções dos leads" className="h-12 w-12 rounded-2xl" items={[
+            { label: "Novo lead", icon: <Plus className="h-4 w-4" />, onSelect: () => setShowCreateModal(true) },
+            { label: "Atualizar leads", icon: <RefreshCw className="h-4 w-4" />, onSelect: () => void refreshAll() },
+            { label: "Exportar planilha", icon: <Download className="h-4 w-4" />, href: `/api/leads/export?agent=${agentScope}` },
+          ]} /></div>
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1"><button type="button" aria-label="Visualizar tabela" aria-pressed={viewMode === "table"} onClick={() => setViewMode("table")} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold ${viewMode === "table" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}><List className="h-4 w-4" />Lista</button><button type="button" aria-label="Visualizar kanban" aria-pressed={viewMode === "kanban"} onClick={() => setViewMode("kanban")} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold ${viewMode === "kanban" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}><LayoutGrid className="h-4 w-4" />Kanban</button></div>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground md:hidden"><span><strong className="text-foreground">{filtered.length}</strong> leads {statusFilter || query ? "encontrados" : "cadastrados"}</span><span><strong className="text-foreground">{filtered.filter(lead => lead.status === "WON").length}</strong> fechados</span><span className="truncate font-semibold text-foreground">{currencyFormatter.format(totalPipeline)}</span></div>
+        <BottomSheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen} title="Filtrar leads"><div className="space-y-5"><label className="grid gap-2 text-sm font-medium">Status ou categoria<select aria-label="Status dos leads" className="h-12 w-full rounded-xl border bg-background px-3" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">Todos os status</option><optgroup label="Status">{statusOptions.map(status => <option key={status.value} value={status.value}>{status.label}</option>)}</optgroup><optgroup label="Categorias">{kanbanStages.map(stage => <option key={stage.id} value={stage.id}>{stage.name}</option>)}</optgroup></select></label>
+          {currentUser?.role === "ADMIN" && !currentUser.permissions["leads.onlyGiga"] && !currentUser.permissions["leads.onlyClick"] ? <label className="grid gap-2 text-sm font-medium">Origem do atendimento<select aria-label="Chatbot exibido" className="h-12 w-full rounded-xl border bg-background px-3" value={agentScope} onChange={event => setAgentScope(event.target.value as AgentScope)}><option value="both">NIO FIBRA e VIVO FIBRA</option><option value="click">NIO FIBRA</option><option value="giga">VIVO FIBRA</option></select></label> : null}
+          <div className="grid grid-cols-2 gap-3 pt-2"><Button type="button" variant="outline" className="h-12 rounded-xl" onClick={() => { setStatusFilter(""); setAgentScope("both"); }}>Limpar filtros</Button><Button type="button" className="h-12 rounded-xl" onClick={() => setMobileFiltersOpen(false)}>Ver leads</Button></div></div></BottomSheet>
+        <div className="hidden gap-3 md:grid md:grid-cols-[auto_1fr_auto_auto_auto]">
           <Button type="button" onClick={() => setShowCreateModal(true)}>
             <Plus className="h-4 w-4" aria-hidden="true" />
             Cadastrar Lead Avulso
@@ -431,7 +460,7 @@ export function LeadBoard() {
           </Button>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="hidden gap-3 md:grid md:grid-cols-3">
           <Metric label="Total de Leads Cadastrados" value={(data?.length ?? 0).toString()} />
           <Metric label="Pipeline estimado" value={currencyFormatter.format(totalPipeline)} />
           <Metric label="Fechados" value={filtered.filter((lead) => lead.status === "WON").length.toString()} />
@@ -445,6 +474,7 @@ export function LeadBoard() {
 
         {viewMode === "kanban" ? (
           <KanbanView
+            isMobile={isMobile}
             leads={filtered}
             loading={loading}
             users={users.data ?? []}
@@ -465,6 +495,7 @@ export function LeadBoard() {
         ) : (
           <div className="space-y-3">
             <TableView
+              isMobile={isMobile}
               leads={paginatedLeads}
               loading={loading}
               users={users.data ?? []}
@@ -515,6 +546,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function KanbanView({
+  isMobile,
   leads,
   loading,
   users,
@@ -532,6 +564,7 @@ function KanbanView({
   onDelete,
   onOpenDetails,
 }: {
+  isMobile: boolean;
   leads: LeadListItem[];
   loading: boolean;
   users: UserOption[];
@@ -549,9 +582,12 @@ function KanbanView({
   onDelete: (id: string) => Promise<void>;
   onOpenDetails: (id: string) => Promise<void>;
 }) {
+  const [showCreateStage, setShowCreateStage] = useState(false);
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   return (
     <div className="space-y-3">
-      <div className="flex flex-col gap-2 rounded-md border bg-background p-3 sm:flex-row">
+      <div className="flex items-center justify-between md:hidden"><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Categorias</p>{canReorder ? <Button type="button" variant="ghost" size="sm" className="h-10" onClick={() => setShowCreateStage(!showCreateStage)}><Plus className="h-4 w-4" />{showCreateStage ? "Fechar" : "Nova categoria"}</Button> : null}</div>
+      <div className={`${showCreateStage ? "flex" : "hidden"} flex-col gap-2 rounded-xl border bg-background p-3 sm:flex-row md:flex`}>
         <Input
           placeholder="Nova etapa do Kanban"
           value={newStageName}
@@ -562,7 +598,7 @@ function KanbanView({
           Criar Etapa
         </Button>
       </div>
-      <div role="region" aria-label="Etapas do Kanban de leads" tabIndex={0} className="flex w-full max-w-full gap-4 overflow-x-auto overscroll-x-contain pb-3">
+      <div role="region" aria-label="Etapas do Kanban de leads" tabIndex={0} className="flex w-full max-w-full snap-x snap-mandatory gap-4 overflow-x-auto overscroll-x-contain pb-3 md:snap-none">
       {stages.map((column, index) => {
         const columnLeads = leads.filter((lead) =>
           lead.kanbanStageId ? lead.kanbanStageId === column.id : lead.status === column.status,
@@ -570,7 +606,8 @@ function KanbanView({
         return (
           <Card
             key={column.id}
-            className="flex h-[calc(100dvh-24rem)] min-h-80 w-[85vw] max-w-[22rem] shrink-0 flex-col sm:w-[22rem]"
+            data-kanban-stage={column.id}
+            className="flex snap-start h-[calc(100dvh-22rem)] min-h-80 md:h-[calc(100dvh-24rem)] w-[85vw] max-w-[22rem] shrink-0 flex-col sm:w-[22rem]"
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               event.preventDefault();
@@ -600,9 +637,10 @@ function KanbanView({
               {loading ? (
                 <EmptyState text="Carregando" />
               ) : columnLeads.length ? (
-                columnLeads.map((lead) => (
+                columnLeads.slice(0, isMobile ? visibleCounts[column.id] ?? 30 : columnLeads.length).map((lead) => (
                   <LeadCard
                     key={lead.id}
+                    isMobile={isMobile}
                     lead={lead}
                     users={users}
                     plans={plans}
@@ -615,6 +653,7 @@ function KanbanView({
               ) : (
                 <EmptyState text="Sem leads" />
               )}
+              {isMobile && columnLeads.length > (visibleCounts[column.id] ?? 30) ? <Button type="button" variant="outline" className="h-11 w-full rounded-xl" onClick={() => setVisibleCounts(current => ({ ...current, [column.id]: (current[column.id] ?? 30) + 30 }))}>Mostrar mais leads</Button> : null}
             </CardContent>
           </Card>
         );
@@ -661,7 +700,7 @@ function StageHeader({
         disabled={savingOrder}
         aria-label={`Arrastar categoria ${stage.name}`}
         title="Arraste para organizar as categorias"
-        className="shrink-0 cursor-grab rounded p-1 text-muted-foreground hover:bg-muted active:cursor-grabbing disabled:opacity-40"
+        className="hidden shrink-0 cursor-grab md:inline-flex rounded p-1 text-muted-foreground hover:bg-muted active:cursor-grabbing disabled:opacity-40"
         onDragStart={event => {
           event.stopPropagation();
           event.dataTransfer.setData("application/x-clickhub-stage", stage.id);
@@ -674,7 +713,7 @@ function StageHeader({
       ) : (
         <span className="min-w-0 flex-1 truncate">{stage.name}</span>
       )}
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="hidden shrink-0 items-center gap-1 md:flex">
         <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{count}</span>
         {canReorder ? <>
           <Button aria-label={`Mover categoria ${stage.name} para a esquerda`} title="Mover categoria para a esquerda" className="h-7 w-7 p-0" size="sm" variant="ghost" type="button" disabled={savingOrder || !previousStageId} onClick={() => previousStageId && void onReorder(stage.id, previousStageId)}><ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" /></Button>
@@ -693,11 +732,46 @@ function StageHeader({
           <Trash2 className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
+      <div className="flex shrink-0 items-center gap-1 md:hidden"><span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">{count}</span>{canReorder ? editing ? <Button type="button" variant="ghost" size="icon" aria-label="Salvar etapa" onClick={() => void save()}><Check className="h-4 w-4" /></Button> : <ActionMenu className="border-0 bg-transparent" label={`Opções da categoria ${stage.name}`} items={[
+        { label: "Mover para a esquerda", icon: <ArrowLeft className="h-4 w-4" />, disabled: savingOrder || !previousStageId, onSelect: () => previousStageId && void onReorder(stage.id, previousStageId) },
+        { label: "Mover para a direita", icon: <ArrowRight className="h-4 w-4" />, disabled: savingOrder || !nextStageId, onSelect: () => nextStageId && void onReorder(stage.id, nextStageId) },
+        { label: "Renomear categoria", icon: <Pencil className="h-4 w-4" />, onSelect: () => setEditing(true) },
+        { label: "Excluir categoria", icon: <Trash2 className="h-4 w-4" />, destructive: true, onSelect: () => void onDeleteStage(stage.id) },
+      ]} /> : null}</div>
     </CardTitle>
   );
 }
 
+function MobileLeadCard({ lead, stages, onUpdate, onDelete, onOpenDetails }: {
+  lead: LeadListItem;
+  stages: LeadStage[];
+  onUpdate: (id: string, payload: Partial<LeadListItem>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onOpenDetails: (id: string) => Promise<void>;
+}) {
+  const [feedback, setFeedback] = useState<{ text: string; success: boolean } | null>(null);
+  useEffect(() => { if (!feedback) return; const timer = window.setTimeout(() => setFeedback(null), 3000); return () => window.clearTimeout(timer); }, [feedback]);
+  async function copy(kind: LeadCopyKind) {
+    try { await navigator.clipboard.writeText(buildLeadCopyText(lead, kind)); setFeedback({ text: kind === "consulta" ? "Consulta copiada." : "Dados da venda copiados.", success: true }); }
+    catch { setFeedback({ text: "Não foi possível copiar. Confira a permissão da área de transferência.", success: false }); }
+  }
+  const whatsapp = buildWhatsAppUrl(lead.phone);
+  return <article data-mobile-lead={lead.id} className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
+    <div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-sm font-bold text-primary">{lead.name.slice(0, 1).toUpperCase()}</span><button type="button" className="min-w-0 flex-1 py-0.5 text-left" aria-label={`Abrir lead ${lead.name}`} onClick={() => void onOpenDetails(lead.id)}><span className="block truncate text-sm font-bold">{lead.name}</span><span className="mt-1 block text-xs tabular-nums text-muted-foreground">{lead.phone}</span></button><ActionMenu className="-mr-1 -mt-1 border-0 bg-transparent" label={`Ações de ${lead.name}`} items={[
+      { label: "Ver detalhes e editar", icon: <Eye className="h-4 w-4" />, onSelect: () => void onOpenDetails(lead.id) },
+      { label: "Conversar no WhatsApp", icon: <MessageCircle className="h-4 w-4 text-emerald-600" />, href: whatsapp || undefined, external: true, disabled: !whatsapp },
+      { label: "Copiar CONSULTA", icon: <FileSearch className="h-4 w-4 text-amber-600" />, onSelect: () => void copy("consulta") },
+      { label: "Copiar SUBIR VENDA", icon: <FileUp className="h-4 w-4 text-emerald-600" />, onSelect: () => void copy("venda") },
+      { label: "Excluir lead", icon: <Trash2 className="h-4 w-4" />, destructive: true, onSelect: () => void onDelete(lead.id) },
+    ]} /></div>
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"><span className="max-w-full truncate font-medium text-foreground">{lead.planName ?? lead.plan?.name ?? "Sem plano definido"}</span><span className="truncate">{[lead.city, lead.state].filter(Boolean).join(" / ") || "Sem localização"}</span></div>
+    <div className="mt-3 flex items-center gap-3 border-t border-border/60 pt-3"><div className="min-w-0 flex-1"><StageSelect ariaLabel={`Etapa de ${lead.name}`} className="h-11 rounded-xl bg-muted/40 text-sm" value={lead.kanbanStageId ?? ""} stages={stages} fallbackStatus={lead.status} onChange={kanbanStageId => void onUpdate(lead.id, { kanbanStageId })} /></div><span className="shrink-0 text-xs font-bold tabular-nums">{currencyFormatter.format(Number(lead.expectedValue ?? 0))}</span></div>
+    {feedback ? <p role={feedback.success ? "status" : "alert"} className={`mt-2 text-xs ${feedback.success ? "text-emerald-600" : "text-destructive"}`}>{feedback.text}</p> : null}
+  </article>;
+}
+
 function TableView({
+  isMobile,
   leads,
   loading,
   users,
@@ -707,6 +781,7 @@ function TableView({
   onDelete,
   onOpenDetails,
 }: {
+  isMobile: boolean;
   leads: LeadListItem[];
   loading: boolean;
   users: UserOption[];
@@ -720,6 +795,7 @@ function TableView({
     return <EmptyState text="Carregando leads" />;
   }
 
+  if (isMobile) return <div className="space-y-3">{leads.length ? leads.map(lead => <MobileLeadCard key={lead.id} lead={lead} stages={stages} onUpdate={onUpdate} onDelete={onDelete} onOpenDetails={onOpenDetails} />) : <EmptyState text="Nenhum lead encontrado" />}</div>;
   return (
     <div className="overflow-hidden rounded-md border bg-background">
       <div className="overflow-x-auto">
@@ -860,6 +936,7 @@ function PaginationControls({
 }
 
 function LeadCard({
+  isMobile,
   lead,
   users,
   plans,
@@ -868,6 +945,7 @@ function LeadCard({
   onDelete,
   onOpenDetails,
 }: {
+  isMobile: boolean;
   lead: LeadListItem;
   users: UserOption[];
   plans: PlanOption[];
@@ -876,6 +954,7 @@ function LeadCard({
   onDelete: (id: string) => Promise<void>;
   onOpenDetails: (id: string) => Promise<void>;
 }) {
+  if (isMobile) return <div draggable onDragStart={event => { event.dataTransfer.setData("text/plain", lead.id); event.dataTransfer.effectAllowed = "move"; }}><MobileLeadCard lead={lead} stages={stages} onUpdate={onUpdate} onDelete={onDelete} onOpenDetails={onOpenDetails} /></div>;
   return (
     <div
       className="rounded-md border bg-background p-3 text-sm"
@@ -955,28 +1034,15 @@ function LeadCreateModal({
 }) {
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 !m-0 bg-black/40">
-      <div className="ml-auto flex h-full w-full max-w-2xl flex-col border-l bg-background shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b p-5">
-          <div>
-            <p className="text-xs uppercase text-muted-foreground">Cadastro avulso</p>
-            <h2 className="text-xl font-semibold">Novo Lead</h2>
-          </div>
-          <Button aria-label="Fechar cadastro" size="sm" variant="ghost" type="button" onClick={onClose}>
-            <X className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        </div>
-        <form className="flex-1 space-y-4 overflow-auto p-5" onSubmit={onSubmit}>
+  return <AppDialog title="Novo Lead" description="Cadastro avulso" onClose={onClose} drawer closeLabel="Fechar cadastro">
+        <form className="space-y-4" onSubmit={onSubmit}>
           <LeadFields users={users} plans={plans} />
           <Button className="w-full" disabled={saving} type="submit">
             <Plus className="h-4 w-4" aria-hidden="true" />
             {saving ? "Salvando" : "Cadastrar"}
           </Button>
         </form>
-      </div>
-    </div>
-  );
+  </AppDialog>;
 }
 
 function LeadEditForm({
@@ -1038,8 +1104,8 @@ function LeadFields({
         <Input name="phone" placeholder="WhatsApp" defaultValue={lead?.phone ?? ""} required />
         <Input name="email" placeholder="E-mail" type="email" defaultValue={lead?.email ?? ""} />
         <Input name="cpfCnpj" placeholder="CPF" defaultValue={lead?.cpfCnpj ?? ""} />
-        <Input name="birthDate" placeholder="Data de nascimento" type="date" defaultValue={formatDateInput(lead?.birthDate)} />
-        <Input name="billingDueDay" placeholder="Dia de vencimento" type="number" min="1" max="31" defaultValue={lead?.billingDueDay ?? ""} />
+        <label className="grid gap-1 text-xs font-medium text-muted-foreground"><span>Data de nascimento</span><Input name="birthDate" placeholder="Data de nascimento" type="date" defaultValue={formatDateInput(lead?.birthDate)} /></label>
+        <label className="grid gap-1 text-xs font-medium text-muted-foreground"><span>Dia de vencimento</span><Input name="billingDueDay" placeholder="Dia de vencimento" type="number" min="1" max="31" defaultValue={lead?.billingDueDay ?? ""} /></label>
       </div>
 
       {stages?.length ? (
@@ -1118,22 +1184,7 @@ function LeadDetailPanel({
     return null;
   }
 
-  return (
-    <div className="fixed inset-0 z-50 !m-0 bg-black/40">
-      <div className="ml-auto flex h-full w-full max-w-2xl flex-col border-l bg-background shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b p-5">
-          <div className="min-w-0">
-            <p className="text-xs uppercase text-muted-foreground">Detalhes do lead</p>
-            <h2 className="truncate text-xl font-semibold">{lead?.name ?? "Carregando"}</h2>
-            {lead && <p className="text-sm font-medium text-primary">Origem: {leadSourceLabel(lead.source)}</p>}
-            <p className="text-sm text-muted-foreground">{lead?.phone ?? "Buscando informacoes"}</p>
-          </div>
-          <Button aria-label="Fechar detalhes" size="sm" variant="ghost" type="button" onClick={onClose}>
-            <X className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        </div>
-
-        <div className="flex-1 space-y-4 overflow-auto p-5">
+  return <AppDialog title={lead?.name ?? "Carregando"} description={lead ? `${lead.phone} · ${leadSourceLabel(lead.source)}` : "Buscando informações do lead"} onClose={onClose} drawer closeLabel="Fechar detalhes"><div className="space-y-4">
           {loading ? (
             <EmptyState text="Carregando detalhes" />
           ) : lead ? (
@@ -1199,10 +1250,8 @@ function LeadDetailPanel({
               </section>
             </>
           ) : null}
-        </div>
-      </div>
-    </div>
-  );
+
+  </div></AppDialog>;
 }
 
 function Info({ label, value }: { label: string; value: string }) {
@@ -1219,6 +1268,7 @@ function StageSelect({
   stages,
   fallbackStatus,
   name,
+  ariaLabel,
   className = "h-8 text-xs",
   onChange,
 }: {
@@ -1226,6 +1276,7 @@ function StageSelect({
   stages: LeadStage[];
   fallbackStatus?: LeadStatus;
   name?: string;
+  ariaLabel?: string;
   className?: string;
   onChange?: (value: string) => void;
 }) {
@@ -1235,6 +1286,7 @@ function StageSelect({
     <select
       className={`w-full rounded-md border bg-background px-2 ${className}`}
       name={name}
+      aria-label={ariaLabel}
       {...(onChange ? { value: selectedValue } : { defaultValue: selectedValue })}
       onChange={(event) => onChange?.(event.target.value)}
     >

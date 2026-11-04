@@ -30,7 +30,7 @@ export function DashboardMetrics({ data, loading }: { data: DashboardMetricsData
   const showExpenses = data?.showExpenses ?? true;
 
   return (
-    <div className={`grid gap-4 sm:grid-cols-2 ${showExpenses ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
+    <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${showExpenses ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
       <MetricCard
         title="Leads Novos"
         value={loading ? "..." : String(data?.newLeads ?? 0)}

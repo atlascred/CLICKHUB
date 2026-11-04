@@ -19,6 +19,7 @@ import {
   UserCog,
   X,
 } from "lucide-react";
+import { AppDialog } from "@/components/ui/app-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { permissions } from "@/constants/permissions";
@@ -146,23 +147,23 @@ export function UserManagement() {
   }
 
   return (
-    <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.08)]">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[28px] sm:p-6 shadow-[0_20px_70px_rgba(15,23,42,0.08)]">
       <div className="space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-sm text-slate-500">
+            <div className="hidden items-center gap-2 text-sm text-slate-500 md:flex">
               <span>início</span>
               <span>=</span>
               <span>cadastros</span>
               <span className="font-semibold text-slate-900">clientes e fornecedores</span>
             </div>
             <div>
-              <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Clientes e Fornecedores</h2>
-              <p className="mt-1 text-sm text-slate-500">Visual unificado de cadastros com foco em fornecedores.</p>
+              <h2 className="text-xl font-semibold tracking-tight text-slate-950 md:text-3xl">Clientes e Fornecedores</h2>
+              <p className="mt-1 hidden text-sm text-slate-500 md:block">Visual unificado de cadastros com foco em fornecedores.</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" variant="outline" className="h-11 rounded-full border-slate-200 px-4 text-slate-700">
+            <Button type="button" variant="outline" className="hidden h-11 rounded-full border-slate-200 px-4 text-slate-700 md:inline-flex">
               <Printer className="h-4 w-4" />
               Imprimir
             </Button>
@@ -170,7 +171,7 @@ export function UserManagement() {
               <Plus className="h-4 w-4" />
               Incluir cadastro
             </Button>
-            <Button type="button" variant="outline" className="h-11 rounded-full border-slate-200 px-4 text-slate-700">
+            <Button type="button" variant="outline" className="hidden h-11 rounded-full border-slate-200 px-4 text-slate-700 md:inline-flex">
               mais ações
               <Ellipsis className="h-4 w-4" />
             </Button>
@@ -180,7 +181,7 @@ export function UserManagement() {
         {notice && <p className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">{notice}</p>}
 
         <div className="flex flex-wrap items-center gap-3">
-          <div className="relative min-w-[320px] flex-1">
+          <div className="relative min-w-0 basis-full flex-1 md:min-w-[320px] md:basis-auto">
             <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
               className="h-12 rounded-2xl border-slate-200 bg-white pl-11 pr-14 text-base shadow-none"
@@ -202,13 +203,13 @@ export function UserManagement() {
           <ToolbarChip icon={<Filter className="h-4 w-4" />} label="filtros" />
         </div>
 
-        <div className="flex flex-wrap items-end gap-8 border-b border-slate-200 pb-4">
+        <div className="flex flex-nowrap items-end gap-5 overflow-x-auto border-b border-slate-200 pb-4 md:flex-wrap md:gap-8">
           {categories.map((item) => (
             <button
               key={item.key}
               type="button"
               onClick={() => changeCategory(item.key)}
-              className={`min-w-[96px] border-b-2 pb-2 text-left transition ${
+              className={`min-w-[80px] shrink-0 border-b-2 pb-2 text-left transition ${
                 category === item.key
                   ? "border-slate-900 text-slate-950"
                   : "border-transparent text-slate-400 hover:text-slate-700"
@@ -222,7 +223,7 @@ export function UserManagement() {
           ))}
           <button
             type="button"
-            className="ml-auto inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-600"
+            className="ml-auto hidden items-center gap-2 rounded-full md:inline-flex border border-slate-200 px-4 py-2 text-sm text-slate-600"
           >
             mais
             <Ellipsis className="h-4 w-4" />
@@ -231,7 +232,7 @@ export function UserManagement() {
 
         <div className="overflow-hidden rounded-[24px] border border-slate-200">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-left">
+            <table className="crm-mobile-table w-full min-w-[980px] text-left">
               <thead className="bg-slate-50 text-sm text-slate-500">
                 <tr className="border-b border-slate-200">
                   <th className="w-14 px-4 py-4">
@@ -254,7 +255,7 @@ export function UserManagement() {
 
                 {!usersResource.loading && paginated.map((user) => (
                   <tr key={user.id} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/70">
-                    <td className="px-4 py-5 align-top">
+                    <td className="hidden px-4 py-5 align-top md:table-cell">
                       <div className="flex items-center gap-3">
                         <input type="checkbox" className="h-4 w-4 rounded border-slate-300" />
                         <button
@@ -276,15 +277,15 @@ export function UserManagement() {
                         <p className="text-sm text-slate-500">{user.title || "Sem cargo informado"}</p>
                       </div>
                     </td>
-                    <td className="px-4 py-5 align-top text-slate-700">{formatCpfCnpjLike(user.phone, user.email)}</td>
-                    <td className="px-4 py-5 align-top text-slate-700">{inferCity(user)}</td>
-                    <td className="px-4 py-5 align-top">
+                    <td data-label="CPF/CNPJ" className="px-4 py-5 align-top text-slate-700">{formatCpfCnpjLike(user.phone, user.email)}</td>
+                    <td data-label="Cidade" className="px-4 py-5 align-top text-slate-700">{inferCity(user)}</td>
+                    <td data-label="Contato" className="px-4 py-5 align-top">
                       <div className="space-y-1 text-slate-700">
                         <p>{user.email}</p>
                         <p>{user.phone || "Sem telefone"}</p>
                       </div>
                     </td>
-                    <td className="px-4 py-5 align-top">
+                    <td data-label="Tipo" className="px-4 py-5 align-top">
                       <div className="space-y-2">
                         <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
                           {user.role === "ADMIN" ? "administrador" : "fornecedor"}
@@ -504,7 +505,7 @@ function ToolbarChip({ icon, label }: { icon?: ReactNode; label: string }) {
   return (
     <button
       type="button"
-      className="inline-flex h-12 items-center gap-2 rounded-full border border-slate-200 px-4 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+      className="hidden md:inline-flex inline-flex h-12 items-center gap-2 rounded-full border border-slate-200 px-4 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
     >
       {icon}
       {label}
@@ -561,17 +562,5 @@ function formatCpfCnpjLike(phone: string | null, email: string) {
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-md border bg-background shadow-2xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-5 py-4">
-          <h2 className="font-semibold">{title}</h2>
-          <Button type="button" size="icon" variant="ghost" onClick={onClose}>
-            <X className="h-5 w-5" />
-          </Button>
-        </div>
-        <div className="p-5">{children}</div>
-      </div>
-    </div>
-  );
+  return <AppDialog title={title} onClose={onClose} className="md:max-w-4xl">{children}</AppDialog>;
 }

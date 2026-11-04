@@ -21,6 +21,8 @@ import {
   FileText,
   UserSquare2,
 } from "lucide-react";
+import { CompactSection } from "@/components/shared/compact-section";
+import { ActionMenu } from "@/components/ui/action-menu";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -185,17 +187,18 @@ export function OverviewPanel() {
 
   return (
     <div className="space-y-5">
-      <section className="overflow-hidden rounded-[28px] border border-sky-100 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.18),_transparent_36%),linear-gradient(135deg,_#ffffff,_#eff6ff_52%,_#ecfeff)] p-6 shadow-[0_24px_80px_-40px_rgba(2,132,199,0.45)]">
+      <section className="overflow-hidden rounded-[28px] border border-sky-100 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.18),_transparent_36%),linear-gradient(135deg,_#ffffff,_#eff6ff_52%,_#ecfeff)] p-4 md:p-6 shadow-[0_24px_80px_-40px_rgba(2,132,199,0.45)]">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-3xl">
             <p className="text-sm font-medium uppercase tracking-[0.24em] text-sky-700">Visão Geral</p>
-            <h2 className="mt-2 text-3xl font-semibold text-slate-950">Panorama completo da operação comercial</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-600">
+            <h2 className="mt-2 text-xl md:text-3xl font-semibold text-slate-950">Panorama completo da operação comercial</h2>
+            <p className="mt-3 hidden text-sm leading-6 md:block text-slate-600">
               Distribuição de leads por funcionário, planos vendidos, status, conversas finalizadas pelos chatbots, assumidas, tarefas e despesas em um único lugar.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="md:hidden"><ActionMenu label="Exportar relatório" items={[{ label: "Exportar Excel", href: exportUrl, icon: <Download className="h-4 w-4" /> }, { label: "Exportar PDF", icon: <FileText className="h-4 w-4" />, disabled: !data, onSelect: exportPdf }]} /></div>
+          <div className="hidden flex-wrap gap-2 md:flex">
             <Button type="button" variant="outline" asChild>
               <a href={exportUrl}>
                 <Download className="h-4 w-4" />
@@ -209,7 +212,7 @@ export function OverviewPanel() {
           </div>
         </div>
 
-        <div className="mt-6 flex flex-col gap-4 rounded-3xl border border-white/60 bg-white/80 p-4 backdrop-blur md:p-5">
+        <div className="mt-4"><CompactSection title="Período do relatório"><div className="flex flex-col gap-4 rounded-3xl border border-white/60 bg-white/80 p-4 backdrop-blur md:p-5">
           <div className="flex flex-wrap gap-2">
             {periodOptions.map((option) => (
               <button
@@ -224,8 +227,8 @@ export function OverviewPanel() {
           </div>
 
           <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] xl:grid-cols-[180px_180px_auto]">
-            <Input type="date" disabled={!customPeriod} value={from} onChange={(event) => setFrom(event.target.value)} />
-            <Input type="date" disabled={!customPeriod} value={to} onChange={(event) => setTo(event.target.value)} />
+            <label className="grid gap-1 text-xs font-medium text-slate-600"><span>Data inicial</span><Input type="date" disabled={!customPeriod} value={from} onChange={(event) => setFrom(event.target.value)} /></label>
+            <label className="grid gap-1 text-xs font-medium text-slate-600"><span>Data final</span><Input type="date" disabled={!customPeriod} value={to} onChange={(event) => setTo(event.target.value)} /></label>
             <div className="flex gap-2">
               <Button type="button" variant="outline" onClick={applyFilters}>
                 <CalendarDays className="h-4 w-4" />
@@ -240,7 +243,7 @@ export function OverviewPanel() {
           <p className="text-xs text-slate-500">
             {data?.range.label ?? "Carregando período selecionado..."}
           </p>
-        </div>
+        </div></CompactSection></div>
       </section>
 
       {overview.error ? (

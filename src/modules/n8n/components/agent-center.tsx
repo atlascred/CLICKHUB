@@ -7,6 +7,7 @@ import {
   Bot, BrainCircuit, Check, ChevronRight, CircleDollarSign, GripVertical,
   KeyRound, Pencil, Plus, Save, Search, Trash2, Workflow, X,
 } from "lucide-react";
+import { AppDialog } from "@/components/ui/app-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -91,9 +92,9 @@ export function AgentCenter() {
 
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b">
-      <div className="flex overflow-x-auto">
+      <div className="flex w-full min-w-0 overflow-x-auto md:w-auto">
         {tabs.map((item) => <button key={item.id} onClick={() => { setTab(item.id); setQuery(""); }}
-          className={`flex h-12 items-center gap-2 border-b-2 px-5 text-sm font-medium ${tab === item.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+          className={`flex h-12 shrink-0 items-center gap-2 border-b-2 px-4 md:px-5 text-sm font-medium ${tab === item.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
           <item.icon className="h-4 w-4" />{item.label}
         </button>)}
       </div>
@@ -210,7 +211,10 @@ function OpenAiCredentials({ saving, onClose, onSave }: { saving: boolean; onClo
   return <Modal title="Credenciais OpenAI" onClose={onClose}><form className="space-y-3" onSubmit={async (e) => { e.preventDefault(); const f = new FormData(e.currentTarget); const key = String(f.get("openAiApiKey") || ""); const payload: Record<string, string> = { openAiModel: String(f.get("openAiModel") || "gpt-4o-mini") }; if (key) payload.openAiApiKey = key; await onSave(payload); }}><div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">A chave é compartilhada por todos os agentes e nunca é exibida nesta tela.</div><Input name="openAiApiKey" type="password" placeholder="Nova chave da OpenAI" /><Input name="openAiModel" defaultValue="gpt-4o-mini" placeholder="Modelo padrão" /><Button className="w-full" disabled={saving}><KeyRound className="h-4 w-4" />Atualizar credenciais</Button></form></Modal>;
 }
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) { return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-md border bg-background shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-5 py-4"><h2 className="font-semibold">{title}</h2><Button size="icon" variant="ghost" onClick={onClose} aria-label="Fechar"><X className="h-5 w-5" /></Button></div><div className="p-5">{children}</div></div></div>; }
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return <AppDialog title={title} onClose={onClose}>{children}</AppDialog>;
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) { return <fieldset className="space-y-3"><legend className="mb-2 text-sm font-semibold">{title}</legend>{children}</fieldset>; }
 function CheckBox({ name, label, checked }: { name: string; label: string; checked: boolean }) { return <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"><input name={name} type="checkbox" defaultChecked={checked} />{label}</label>; }
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) { return <div className="relative max-w-md"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} /></div>; }

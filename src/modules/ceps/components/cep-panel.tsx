@@ -4,6 +4,7 @@ import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
 
 import { FormEvent, useState } from "react";
 import { FileUp, MapPin, Plus, Search } from "lucide-react";
+import { CompactSection } from "@/components/shared/compact-section";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -115,7 +116,7 @@ export function CepPanel() {
     <div className="space-y-4">
       <label className="flex flex-wrap items-center gap-3 text-sm font-medium">Base de cobertura<select aria-label="Base de cobertura do agente" className="h-10 rounded-md border bg-background px-3" value={agentId} onChange={event=>{setAgentId(event.target.value);setResult(null);setMessage("");}}><option value="">Base geral / NIO FIBRA</option>{(agents.data ?? []).map(agent=><option key={agent.id} value={agent.id}>{whatsappAgentLabel(agent.instanceName)}</option>)}</select></label>
       {overview.data?.restricted ? <p className="text-sm text-muted-foreground">Esta base é própria do agente selecionado e foi carregada pelas planilhas de cobertura.</p> : null}
-      {isAdmin ? <div className="grid gap-3 sm:grid-cols-3">
+      {isAdmin ? <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <Metric label="CEPs cadastrados" value={String(overview.data?.total ?? 0)} />
         <Metric label="Com cobertura" value={String(overview.data?.available ?? 0)} />
         <Metric label="Sem cobertura" value={String(overview.data?.unavailable ?? 0)} />
@@ -139,7 +140,7 @@ export function CepPanel() {
           </CardContent>
         </Card>
 
-        {canEditBase ? <Card>
+        {canEditBase ? <CompactSection title="Cadastrar cobertura"><Card>
           <CardHeader>
             <CardTitle>Cadastrar Cobertura</CardTitle>
             <CardDescription>Inclusao ou atualizacao pontual de CEP</CardDescription>
@@ -163,11 +164,11 @@ export function CepPanel() {
               </Button>
             </form>
           </CardContent>
-        </Card> : null}
+        </Card></CompactSection> : null}
       </div>
 
       {isAdmin ? <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        {canEditBase ? <Card>
+        {canEditBase ? <CompactSection title="Importar base de CEPs"><Card>
           <CardHeader>
             <CardTitle>Importar Base</CardTitle>
             <CardDescription>Arquivos XLSX ou CSV</CardDescription>
@@ -181,7 +182,7 @@ export function CepPanel() {
               </Button>
             </form>
           </CardContent>
-        </Card> : null}
+        </Card></CompactSection> : null}
 
         <Card>
           <CardHeader>

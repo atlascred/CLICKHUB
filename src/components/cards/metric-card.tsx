@@ -24,14 +24,14 @@ export function MetricCard({ title, value, helper, icon: Icon, href, tone = "blu
   const card = (
     <Card className={`group relative h-full overflow-hidden bg-gradient-to-br ${color.surface} to-transparent transition-colors hover:border-primary/25`}>
       <div className={`absolute inset-x-0 top-0 h-0.5 ${color.line}`} />
-      <CardContent className="p-5">
-        <div className="mb-4 flex items-center justify-between gap-2">
+      <CardContent className="p-4 sm:p-5">
+        <div className="mb-3 flex md:mb-4 items-center justify-between gap-2">
           <p className={`text-xs font-bold ${color.ink}`}>{title}</p>
           <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white shadow-sm ${color.icon}`}><Icon className="h-4 w-4" aria-hidden="true" /></div>
         </div>
         <div className="min-w-0">
-          <p className="break-words text-[clamp(1.5rem,2.1vw,2rem)] font-extrabold tracking-tight tabular-nums">{value}</p>
-          <div className="mt-4 flex items-center justify-between border-t border-foreground/5 pt-3"><p className="text-[11px] text-muted-foreground">{helper}</p>{href ? <ArrowUpRight className={`h-3.5 w-3.5 ${color.ink}`} /> : null}</div>
+          <p className="break-words text-[clamp(1.1rem,4.5vw,1.4rem)] md:text-[clamp(1.5rem,2.1vw,2rem)] font-extrabold tracking-tight tabular-nums">{value}</p>
+          <div className="mt-4 hidden items-center md:flex justify-between border-t border-foreground/5 pt-3"><p className="text-[11px] text-muted-foreground">{helper}</p>{href ? <ArrowUpRight className={`h-3.5 w-3.5 ${color.ink}`} /> : null}</div>
         </div>
       </CardContent>
     </Card>

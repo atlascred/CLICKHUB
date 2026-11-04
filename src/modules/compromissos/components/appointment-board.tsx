@@ -1,11 +1,13 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { CalendarDays, Check, LayoutGrid, List, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { AppDialog } from "@/components/ui/app-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useApiResource } from "@/hooks/use-api-resource";
 import { useCurrentUser } from "@/hooks/use-current-user";
 
@@ -61,6 +63,7 @@ type AppointmentItem = {
 };
 
 export function AppointmentBoard() {
+  const isMobile = useMediaQuery("(max-width: 767px)");
   const { data, loading, error, refresh } = useApiResource<AppointmentItem[]>("/api/appointments");
   const leads = useApiResource<LeadOption[]>("/api/leads");
   const users = useApiResource<UserOption[]>("/api/users");
@@ -68,6 +71,7 @@ export function AppointmentBoard() {
   const currentUser = useCurrentUser();
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
+  useEffect(() => { if (isMobile) setViewMode("table"); }, [isMobile]);
   const [saving, setSaving] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newStageName, setNewStageName] = useState("");
@@ -185,7 +189,7 @@ export function AppointmentBoard() {
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
-          <div className="flex rounded-md border bg-background p-1">
+          <div className="grid grid-cols-2 gap-1 rounded-xl border bg-background p-1 md:flex">
             <Button
               aria-label="Visualizar kanban"
               size="sm"
@@ -193,7 +197,7 @@ export function AppointmentBoard() {
               variant={viewMode === "kanban" ? "secondary" : "ghost"}
               onClick={() => setViewMode("kanban")}
             >
-              <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+              <LayoutGrid className="h-4 w-4" aria-hidden="true" /><span className="md:sr-only">Kanban</span>
             </Button>
             <Button
               aria-label="Visualizar tabela"
@@ -202,12 +206,12 @@ export function AppointmentBoard() {
               variant={viewMode === "table" ? "secondary" : "ghost"}
               onClick={() => setViewMode("table")}
             >
-              <List className="h-4 w-4" aria-hidden="true" />
+              <List className="h-4 w-4" aria-hidden="true" /><span className="md:sr-only">Lista</span>
             </Button>
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
           <Metric label="Compromissos" value={filtered.length.toString()} />
           <Metric label="Hoje" value={todayCount.toString()} />
           <Metric label="Atrasados" value={overdue.toString()} />
@@ -288,19 +292,8 @@ function AppointmentCreateModal({
 }) {
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/40">
-      <div className="ml-auto flex h-full w-full max-w-2xl flex-col border-l bg-background shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b p-5">
-          <div>
-            <p className="text-xs uppercase text-muted-foreground">Novo compromisso</p>
-            <h2 className="text-xl font-semibold">Cadastrar Compromisso</h2>
-          </div>
-          <Button aria-label="Fechar cadastro" size="sm" variant="ghost" type="button" onClick={onClose}>
-            <X className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        </div>
-        <form className="flex-1 space-y-3 overflow-auto p-5" onSubmit={onSubmit}>
+  return <AppDialog title="Cadastrar Compromisso" description="Novo compromisso" onClose={onClose} drawer closeLabel="Fechar cadastro">
+        <form className="space-y-3" onSubmit={onSubmit}>
           <Input name="title" placeholder="Titulo" required />
           <select className="h-10 w-full rounded-md border bg-background px-3 text-sm" name="stageId" defaultValue="">
             <option value="">Etapa</option>
@@ -338,9 +331,9 @@ function AppointmentCreateModal({
               </option>
             ))}
           </select>
-          <div className="grid grid-cols-2 gap-3">
-            <Input name="startsAt" type="datetime-local" />
-            <Input name="dueAt" type="datetime-local" />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1 text-xs font-medium text-muted-foreground"><span>Início do compromisso</span><Input name="startsAt" type="datetime-local" /></label>
+            <label className="grid gap-1 text-xs font-medium text-muted-foreground"><span>Prazo do compromisso</span><Input name="dueAt" type="datetime-local" /></label>
           </div>
           <Textarea name="description" placeholder="Descricao" />
           <Button className="w-full" disabled={saving} type="submit">
@@ -348,9 +341,7 @@ function AppointmentCreateModal({
             {saving ? "Salvando" : "Cadastrar"}
           </Button>
         </form>
-      </div>
-    </div>
-  );
+  </AppDialog>;
 }
 
 function KanbanView({
@@ -473,7 +464,7 @@ function TableView({
   return (
     <div className="overflow-hidden rounded-md border bg-background">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1080px] text-sm">
+        <table className="crm-mobile-table w-full min-w-[1080px] text-sm">
           <thead className="bg-muted/60 text-left text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-3 py-3 font-medium">Compromisso</th>
@@ -493,7 +484,7 @@ function TableView({
                     <p className="font-medium">{item.title}</p>
                     <p className="text-xs text-muted-foreground">{item.description ?? "Sem descricao"}</p>
                   </td>
-                  <td className="px-3 py-3">
+                  <td data-label="Status" className="px-3 py-3">
                     <StageSelect
                       value={item.stageId ?? ""}
                       stages={stages}
@@ -501,16 +492,16 @@ function TableView({
                       onChange={(stageId) => onUpdate(item.id, { stageId })}
                     />
                   </td>
-                  <td className="px-3 py-3">
+                  <td data-label="Prioridade" className="px-3 py-3">
                     <PrioritySelect
                       value={item.priority}
                       onChange={(priority) => onUpdate(item.id, { priority })}
                     />
                   </td>
-                  <td className="px-3 py-3">
+                  <td data-label="Lead" className="px-3 py-3">
                     <LeadSelect value={item.leadId ?? ""} leads={leads} onChange={(leadId) => onUpdate(item.id, { leadId })} />
                   </td>
-                  <td className="px-3 py-3">
+                  <td data-label="Responsável" className="px-3 py-3">
                     <UserSelect
                       value={item.assignedToAll ? "__all" : item.responsibleId ?? ""}
                       users={users}
@@ -520,7 +511,7 @@ function TableView({
                       }
                     />
                   </td>
-                  <td className="px-3 py-3 text-xs text-muted-foreground">{formatDate(item.dueAt) || "Sem prazo"}</td>
+                  <td data-label="Prazo" className="px-3 py-3 text-xs text-muted-foreground">{formatDate(item.dueAt) || "Sem prazo"}</td>
                   <td className="px-3 py-3 text-right">
                     <Button aria-label="Excluir compromisso" size="sm" variant="destructive" type="button" onClick={() => onDelete(item.id)}>
                       <Trash2 className="h-4 w-4" aria-hidden="true" />
