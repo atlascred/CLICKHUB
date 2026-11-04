@@ -2,7 +2,7 @@
 import { leadSourceLabel } from "@/modules/leads/types/lead-source";
 import { buildLeadCopyText, type LeadCopyKind } from "@/modules/leads/clipboard";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, Check, FileSearch, Download, Eye, FileUp, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -119,7 +119,7 @@ export function LeadBoard() {
   const searchParams = useSearchParams();
   const { data: currentUser } = useCurrentUser();
   const [agentScope, setAgentScope] = useState<AgentScope>("both");
-  const { data, loading, error, refresh } = useApiResource<LeadListItem[]>(`/api/leads?agent=${agentScope}`);
+  const { data, loading, error, refresh, setData: setLeads } = useApiResource<LeadListItem[]>(`/api/leads?agent=${agentScope}`);
   const users = useApiResource<UserOption[]>("/api/users");
   const plans = useApiResource<PlanOption[]>("/api/plans");
   const stages = useApiResource<LeadStage[]>("/api/lead-stages");
@@ -127,6 +127,8 @@ export function LeadBoard() {
   const [statusFilter, setStatusFilter] = useState(searchParams.get("status") ?? "");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [saving, setSaving] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const pendingUpdates = useRef(new Map<string, Promise<void>>());
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newStageName, setNewStageName] = useState("");
   const [detail, setDetail] = useState<LeadDetail | null>(null);
@@ -235,15 +237,31 @@ export function LeadBoard() {
   }
 
   async function updateLead(id: string, payload: Partial<LeadListItem>) {
-    const response = await fetch(`/api/leads/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+    // Serialize edits to the same lead so a slower response cannot undo a later edit.
+    const previous = pendingUpdates.current.get(id) ?? Promise.resolve();
+    const update = previous.then(async () => {
+      setUpdateError(null);
+      try {
+        const response = await fetch(`/api/leads/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = (await response.json()) as ApiResult<LeadListItem>;
+        if (!response.ok || result.status !== "success" || result.data?.id !== id) {
+          throw new Error(result.message || "Não foi possível atualizar o lead.");
+        }
+        const remainsAssigned = currentUser?.role !== "EMPLOYEE" || result.data.assignedUserId === currentUser.id;
+        setLeads((current) => current?.filter((lead) => lead.id !== id || remainsAssigned).map((lead) => lead.id === id ? { ...lead, ...result.data } : lead) ?? null);
+        setDetail((current) => current?.id === id ? remainsAssigned ? { ...current, ...result.data } : null : current);
+        window.dispatchEvent(new Event("crm:dashboard-refresh"));
+      } catch (error) {
+        setUpdateError(error instanceof Error ? error.message : "Não foi possível atualizar o lead.");
+      }
     });
-    if (response.ok) {
-      window.dispatchEvent(new Event("crm:dashboard-refresh"));
-      await refresh();
-    }
+    pendingUpdates.current.set(id, update);
+    await update;
+    if (pendingUpdates.current.get(id) === update) pendingUpdates.current.delete(id);
   }
 
   async function refreshAll() {
@@ -387,6 +405,7 @@ export function LeadBoard() {
         </div>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {updateError ? <p role="alert" className="text-sm text-destructive">{updateError}</p> : null}
         {users.error || plans.error ? (
           <p className="text-sm text-muted-foreground">Algumas opcoes auxiliares nao foram carregadas.</p>
         ) : null}

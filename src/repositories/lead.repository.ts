@@ -72,6 +72,7 @@ export class LeadRepository {
     return prisma.lead.update({
       where: { id },
       data: nextData as Prisma.LeadUncheckedUpdateInput,
+      include: { assignedUser: true, plan: true, kanbanStage: true },
     });
   }
 

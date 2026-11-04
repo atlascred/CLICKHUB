@@ -55,5 +55,5 @@ export function useApiResource<T>(url: string) {
     void refresh();
   }, [refresh]);
 
-  return { data, loading, error, refresh };
+  return { data, loading, error, refresh, setData };
 }
