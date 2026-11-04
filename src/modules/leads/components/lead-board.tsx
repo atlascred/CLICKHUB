@@ -520,7 +520,7 @@ function KanbanView({
           Criar Etapa
         </Button>
       </div>
-      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+      <div role="region" aria-label="Etapas do Kanban de leads" tabIndex={0} className="flex w-full max-w-full gap-4 overflow-x-auto overscroll-x-contain pb-3">
       {stages.map((column) => {
         const columnLeads = leads.filter((lead) =>
           lead.kanbanStageId ? lead.kanbanStageId === column.id : lead.status === column.status,
@@ -528,7 +528,7 @@ function KanbanView({
         return (
           <Card
             key={column.id}
-            className="min-h-72"
+            className="flex h-[calc(100dvh-24rem)] min-h-80 w-[85vw] max-w-[22rem] shrink-0 flex-col sm:w-[22rem]"
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               event.preventDefault();
@@ -536,7 +536,7 @@ function KanbanView({
               if (leadId) void onUpdate(leadId, { kanbanStageId: column.id });
             }}
           >
-            <CardHeader className="p-4">
+            <CardHeader className="shrink-0 p-4">
               <StageHeader
                 stage={column}
                 count={columnLeads.length}
@@ -544,7 +544,7 @@ function KanbanView({
                 onDeleteStage={onDeleteStage}
               />
             </CardHeader>
-            <CardContent className="space-y-3 p-4 pt-0">
+            <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain p-4 pt-0">
               {loading ? (
                 <EmptyState text="Carregando" />
               ) : columnLeads.length ? (
