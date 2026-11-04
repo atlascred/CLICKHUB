@@ -419,10 +419,10 @@ test('76 — URL e payload de instâncias divergentes são recusados', () => {
 test('77 — mesma mensagem em instâncias diferentes tem identidade independente', () => {
   const { scopedEvolutionId } = require('../src/services/evolution-context'); assert.notEqual(scopedEvolutionId('CLICK','same'), scopedEvolutionId('GIGA CLICK','same')); assert.equal(scopedEvolutionId('CLICK','same'), scopedEvolutionId('CLICK','same'));
 });
-test('78 — catálogo GIGA é separado e não herda chip, roteador ou prazo de Globoplay', () => {
+test('78 — catálogo VIVO é separado e não inclui Globoplay, chip ou roteador', () => {
   const { gigaCommercialPlans } = require('../scripts/lib/giga-commercial-plans');
   assert.deepEqual(gigaCommercialPlans.map((p: any) => p.price), [100,120,150,200]); assert.deepEqual(plans.map(p => p.price), [55,70,85]);
-  for (const plan of gigaCommercialPlans) { assert.ok(plan.description.includes('Globoplay grátis')); assert.ok(!/chip|Wi-Fi|12 meses/.test(plan.description)); }
+  for (const plan of gigaCommercialPlans) { assert.ok(!/globoplay|chip|Wi-Fi|12 meses/i.test(plan.description)); }
 });
 test('79 — um cliente conversa com os dois agentes sem compartilhar memória, histórico ou recibos', async () => {
   const { isolatedDatabase } = require('./agent-isolation-fixture'); const { scopedEvolutionId } = require('../src/services/evolution-context');
