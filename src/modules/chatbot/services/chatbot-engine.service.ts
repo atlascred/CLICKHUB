@@ -338,7 +338,7 @@ export class ChatbotEngineService {
     const explicitPlan = (Boolean(evidence.plan) || /(?:trocar|mudar|alterar|prefiro|quero|plano|ficar com|opcao)/i.test(normalizeText(text)))
       && /\b(600|700|800|1000|1\s*giga|seiscentos|setecentos|oitocentos|disney)\b/i.test(normalizeText(text))
       && !text.includes("?") && !/\bnao\b/.test(normalizeText(text));
-    const conflict = conflictingFields(originalText);
+    const conflict = conflictingFields(originalText, input.state === "ASK_EMAIL" && isEmailAnswer(text));
     if (conflict) return { state: input.state, memory: { ...input.memory }, reply: `${conflict}\n\n${promptForState(input.state, firstName)}` };
     if (hasInjection(originalText)) return { state: input.state, memory: { ...input.memory }, reply: `Posso ajudar, mas não posso alterar condições comerciais nem confirmar ações que não foram realizadas.\n\n${promptForState(input.state, firstName)}` };
     if (explicitPlan && mentionedPlan && input.state !== "CHOOSE_PLAN" && input.state !== "FINISHED") {
@@ -378,6 +378,12 @@ export class ChatbotEngineService {
 
     if (/^\[(Áudio|Imagem|Documento|Arquivo)/i.test(text) || (input.extractedData && !Object.keys(input.extractedData).length)) {
       return { state: input.state, memory, reply: `Não consegui identificar o conteúdo com segurança. Pode escrever a informação?\n\n${promptForState(input.state, firstName)}` };
+    }
+    if (input.state === "ASK_EMAIL" && isEmailAnswer(text)) {
+      // Preserve what the customer supplied for the operator; never invent an address.
+      memory.email = text;
+      memory.emailCollected = true;
+      return { state: "ASK_BILLING_DUE_DAY", memory, reply: billingDueDayPrompt() };
     }
     if (input.interpretation?.intent === "unclear" || /^(nao sei|sei la|nao entendi|ahn)$/.test(normalizeText(text)) || /^\?+$/.test(text.trim())) {
       memory.confusionCount = (memory.confusionCount ?? 0) + 1;
@@ -610,15 +616,6 @@ export class ChatbotEngineService {
       }
       if (birthDate) memory.birthDate = birthDate.toISOString();
       return nextCustomerDataResponse(memory, `Perfeito! 🎉\n📅 Data de nascimento registrada: ${formatDate(new Date(memory.birthDate ?? ""))}\nEstamos quase terminando seus dados. 😊\n\n`);
-    }
-
-    if (input.state === "ASK_EMAIL") {
-      const email = parseEmail(text);
-      if (!email && !memory.email) {
-        return { state: "ASK_EMAIL", memory, reply: "Esse e-mail não parece válido. Pode me enviar novamente, por favor? 😊" };
-      }
-      if (email) memory.email = email;
-      return nextCustomerDataResponse(memory, `Perfeito! ✅\n📧 Registrei: ${memory.email}\n\n`);
     }
 
     if (input.state === "ASK_BILLING_DUE_DAY") {
@@ -979,6 +976,7 @@ type ChatMemory = {
   whatsapp?: string;
   birthDate?: string;
   email?: string;
+  emailCollected?: boolean;
   billingDueDay?: number;
   planId?: string;
   planName?: string;
@@ -1430,7 +1428,7 @@ function nextCustomerDataResponse(memory: ChatMemory, prefix = ""): NextBotRespo
     };
   }
 
-  if (!memory.email || !parseEmail(memory.email)) {
+  if (!memory.email || (!memory.emailCollected && !parseEmail(memory.email))) {
     return {
       state: "ASK_EMAIL",
       memory,
@@ -1442,7 +1440,7 @@ function nextCustomerDataResponse(memory: ChatMemory, prefix = ""): NextBotRespo
     return {
       state: "ASK_BILLING_DUE_DAY",
       memory,
-      reply: `${prefix}Agora falta escolher o melhor dia para o vencimento da sua fatura. 💳\n📅 Você pode escolher:\n05 • 08 • 10 • 15 • 20 • 25\n\nQual dia fica melhor para você?`,
+      reply: `${prefix}${billingDueDayPrompt()}`,
     };
   }
 
@@ -2021,9 +2019,9 @@ function applyValidatedExtractedData(memory: ChatMemory, data: ExtractedCustomer
   applyExtractedAddress(memory, data);
 }
 
-function conflictingFields(text: string) {
+function conflictingFields(text: string, acceptEmailAnswer = false) {
   const emails = [...new Set(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [])];
-  if (emails.length > 1) return "Recebi dois e-mails diferentes. Qual deles devo usar?";
+  if (emails.length > 1 && !acceptEmailAnswer) return "Recebi dois e-mails diferentes. Qual deles devo usar?";
   const ceps = [...new Set([...text.matchAll(/\bcep\s*[:=]?\s*(\d{5}[- ]?\d{3})\b/gi)].map(m => onlyDigits(m[1])))];
   if (ceps.length > 1) return "Recebi dois CEPs diferentes. Qual é o CEP da instalação?";
   if (!text.includes("?") && /quero|prefiro/.test(normalizeText(text)) && /\b600\b/.test(text) && /\b800\b/.test(text)) return "Você mencionou dois planos. Prefere 600 MEGA ou 800 MEGA?";
@@ -2073,6 +2071,7 @@ function applyBatchData(memory: ChatMemory, parts: string[], state: string, plan
 /** Fixed-flow inputs must not wait for model classification or a settings lookup. */
 function needsConversationalInterpretation(text: string, state: string, memory: ChatMemory, plans: PlanCandidate[]) {
   const value = text.trim();
+  if (state === "ASK_EMAIL" && isEmailAnswer(value)) return false;
   if (value.length <= 3 || hasInjection(value)) return false;
   if (officialAnswer(value) || isRestartRequest(value) || isHandoffRequest(value) || asksForPlanRecommendation(value) || asksForPlanList(value)) return false;
   if (looksLikeQuestion(value)) return true;
@@ -2088,4 +2087,17 @@ function needsConversationalInterpretation(text: string, state: string, memory: 
   if (state === "ASK_BILLING_DUE_DAY" && parseBillingDay(value)) return false;
   if (state === "CORRECTION" && (isCorrectionChoiceOnly(value) || (memory.correctionField && validCorrection(memory.correctionField, value, plans)))) return false;
   return true;
+}
+
+function billingDueDayPrompt() {
+  return "Agora falta escolher o melhor dia para o vencimento da sua fatura. 💳\n📅 Você pode escolher:\n05 • 08 • 10 • 15 • 20 • 25\n\nQual dia fica melhor para você?";
+}
+
+function isEmailAnswer(value: string) {
+  const text = value.trim(), normalized = normalizeText(text);
+  if (!text || hasInjection(text) || isRestartRequest(text) || isHandoffRequest(text) || officialAnswer(text)) return false;
+  if (asksForPlanRecommendation(text) || asksForPlanList(text) || isPlanQuestion(text)) return false;
+  if (/nao (sei|tenho|lembro|consigo)|esqueci|sem e-?mail/.test(normalized)) return true;
+  if (/voltei|continuar|onde paramos|retomar|irritad|chatead|que saco|muita pergunta|perguntas demais|reclam|demorad/.test(normalized)) return false;
+  return !looksLikeQuestion(text) || /^\?+$/.test(text) || /e-?mail|gmail|hotmail|outlook|arroba/.test(normalized);
 }
