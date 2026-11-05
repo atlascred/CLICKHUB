@@ -189,7 +189,7 @@ export function ConversationCenter() {
           setNewAgentId(""); setIsCreateOpen(true); setIsLoading(false);
           void latestLoadRef.current({ reset: true, preferredId: null });
         }
-      }).catch(error => { if (!controller.signal.aborted) { leadNavigationPending.current = false; setIsLoading(false); setListError(error.message || "Não foi possível abrir a conversa."); } });
+      }).catch(error => { if (!controller.signal.aborted) { leadNavigationPending.current = true; setIsLoading(false); setListError(error.message || "Não foi possível abrir a conversa."); } });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedLeadId]);
@@ -461,7 +461,7 @@ export function ConversationCenter() {
       summaryTimerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilter, agentScope]);
+  }, [activeFilter, agentScope, requestedLeadId]);
 
   useEffect(() => {
     return () => {
