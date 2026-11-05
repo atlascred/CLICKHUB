@@ -1,6 +1,6 @@
 "use client";
 
-import { fetchApi } from "@/lib/client-api";
+import { apiErrorMessage, fetchApi } from "@/lib/client-api";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 import { FormEvent, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -46,8 +46,8 @@ export function LoginForm() {
     }
 
       setError(result.message);
-    } catch {
-      setError("Não foi possível conectar. Confira sua conexão e tente novamente.");
+    } catch (error) {
+      setError(apiErrorMessage(error));
     } finally {
       setLoading(false);
     }
