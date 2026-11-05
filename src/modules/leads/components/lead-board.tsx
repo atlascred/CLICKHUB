@@ -1,5 +1,5 @@
 "use client";
-import { leadSourceLabel } from "@/modules/leads/types/lead-source";
+import { leadOperatorLabels, leadOriginText } from "@/modules/leads/types/lead-source";
 import { buildLeadCopyText, type LeadCopyKind } from "@/modules/leads/clipboard";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -69,6 +69,7 @@ type LeadListItem = {
   status: LeadStatus;
   kanbanStageId: string | null;
   source: string;
+  operatorInstances?: string[];
   notes: string | null;
   expectedValue: string | number | null;
   planName: string | null;
@@ -166,7 +167,7 @@ export function LeadBoard() {
       (!createdFilter || createdFilter !== "today" || lead.createdAt?.slice(0, 10) === today) &&
       [
         lead.name,
-        leadSourceLabel(lead.source),
+        leadOriginText(lead),
         lead.phone,
         lead.email,
         lead.cpfCnpj,
@@ -742,6 +743,11 @@ function StageHeader({
   );
 }
 
+function LeadOriginBadge({ lead }: { lead: LeadListItem }) {
+  const labels = leadOperatorLabels(lead);
+  return <span aria-label="Origem do lead" className="inline-flex flex-wrap gap-1.5">{(labels.length ? labels : [leadOriginText(lead)]).map(label => <span key={label} className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-bold ${label === "VIVO FIBRA" ? "border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-200" : label === "NIO FIBRA" ? "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200" : "border-border bg-muted text-muted-foreground"}`}>{label}</span>)}</span>;
+}
+
 function MobileLeadCard({ lead, stages, onUpdate, onDelete, onOpenDetails }: {
   lead: LeadListItem;
   stages: LeadStage[];
@@ -764,6 +770,7 @@ function MobileLeadCard({ lead, stages, onUpdate, onDelete, onOpenDetails }: {
       { label: "Copiar SUBIR VENDA", icon: <FileUp className="h-4 w-4 text-emerald-600" />, onSelect: () => void copy("venda") },
       { label: "Excluir lead", icon: <Trash2 className="h-4 w-4" />, destructive: true, onSelect: () => void onDelete(lead.id) },
     ]} /></div>
+    <div className="mt-2"><LeadOriginBadge lead={lead} /></div>
     <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"><span className="max-w-full truncate font-medium text-foreground">{lead.planName ?? lead.plan?.name ?? "Sem plano definido"}</span><span className="truncate">{[lead.city, lead.state].filter(Boolean).join(" / ") || "Sem localização"}</span></div>
     <div className="mt-3 flex items-center gap-3 border-t border-border/60 pt-3"><div className="min-w-0 flex-1"><StageSelect ariaLabel={`Etapa de ${lead.name}`} className="h-11 rounded-xl bg-muted/40 text-sm" value={lead.kanbanStageId ?? ""} stages={stages} fallbackStatus={lead.status} onChange={kanbanStageId => void onUpdate(lead.id, { kanbanStageId })} /></div><span className="shrink-0 text-xs font-bold tabular-nums">{currencyFormatter.format(Number(lead.expectedValue ?? 0))}</span></div>
     {feedback ? <p role={feedback.success ? "status" : "alert"} className={`mt-2 text-xs ${feedback.success ? "text-emerald-600" : "text-destructive"}`}>{feedback.text}</p> : null}
@@ -818,7 +825,7 @@ function TableView({
                 <tr key={lead.id}>
                   <td className="px-3 py-3">
                     <p className="font-medium">{lead.name}</p>
-                    <span className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-200">{leadSourceLabel(lead.source)}</span>
+                    <div className="mt-1"><LeadOriginBadge lead={lead} /></div>
                   </td>
                   <td className="px-3 py-3 text-xs text-muted-foreground">{lead.phone}</td>
                   <td className="px-3 py-3 text-xs text-muted-foreground">
@@ -967,7 +974,7 @@ function LeadCard({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-[120px] flex-1">
           <p className="truncate font-medium">{lead.name}</p>
-          <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-200">{leadSourceLabel(lead.source)}</span>
+          <LeadOriginBadge lead={lead} />
           <p className="text-muted-foreground">{lead.phone}</p>
         </div>
         <div className="flex shrink-0 gap-1">
@@ -1184,7 +1191,7 @@ function LeadDetailPanel({
     return null;
   }
 
-  return <AppDialog title={lead?.name ?? "Carregando"} description={lead ? `${lead.phone} · ${leadSourceLabel(lead.source)}` : "Buscando informações do lead"} onClose={onClose} drawer closeLabel="Fechar detalhes"><div className="space-y-4">
+  return <AppDialog title={lead?.name ?? "Carregando"} description={lead ? `${lead.phone} · ${leadOriginText(lead)}` : "Buscando informações do lead"} onClose={onClose} drawer closeLabel="Fechar detalhes"><div className="space-y-4">
           {loading ? (
             <EmptyState text="Carregando detalhes" />
           ) : lead ? (
@@ -1234,7 +1241,7 @@ function LeadDetailPanel({
                           {conversation.messages.map((message) => (
                             <div key={message.id} className="rounded-md bg-muted p-2 text-sm">
                               <p className="text-xs uppercase text-muted-foreground">
-                                {message.direction === "inbound" ? "Cliente" : leadSourceLabel(lead.source)} -{" "}
+                                {message.direction === "inbound" ? "Cliente" : leadOriginText(lead)} -{" "}
                                 {formatDateTime(message.createdAt)}
                               </p>
                               <p className="mt-1 whitespace-pre-wrap">{message.body}</p>

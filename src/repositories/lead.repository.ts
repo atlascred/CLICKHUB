@@ -3,17 +3,27 @@ import { leadSourceWhere, type LeadAccessUser } from "@/lib/lead-source-access";
 import type { Prisma, User } from "@prisma/client";
 import type { CreateLeadInput, UpdateLeadInput } from "@/modules/leads/types/lead";
 
+const operatorConversations = {
+  distinct: ["agentId"],
+  select: { agent: { select: { zapiInstanceId: true } } },
+} satisfies Prisma.ChatConversationFindManyArgs;
+
+function withOperators<T extends { conversations: Array<{ agent: { zapiInstanceId: string | null } | null }> }>(lead: T) {
+  return { ...lead, operatorInstances: [...new Set(lead.conversations.flatMap(({ agent }) => agent?.zapiInstanceId ? [agent.zapiInstanceId] : []))] };
+}
+
 export class LeadRepository {
   async findMany(user?: LeadAccessUser, agentScope?: string) {
-    return prisma.lead.findMany({
+    const leads = await prisma.lead.findMany({
       where: buildLeadAccessWhere(user, agentScope),
       orderBy: { createdAt: "desc" },
-      include: { assignedUser: true, plan: true, kanbanStage: true },
+      include: { assignedUser: true, plan: true, kanbanStage: true, conversations: operatorConversations },
     });
+    return leads.map(({ conversations, ...lead }) => ({ ...lead, operatorInstances: withOperators({ conversations }).operatorInstances }));
   }
 
   async findById(id: string, user?: LeadAccessUser) {
-    return prisma.lead.findFirst({
+    const lead = await prisma.lead.findFirst({
       where: { id, ...buildLeadAccessWhere(user) },
       include: {
         assignedUser: true,
@@ -28,6 +38,7 @@ export class LeadRepository {
         conversations: {
           where: { deletedAt: null },
           include: {
+            agent: { select: { zapiInstanceId: true } },
             messages: {
               orderBy: { createdAt: "desc" },
               take: 20,
@@ -38,6 +49,7 @@ export class LeadRepository {
         },
       },
     });
+    return lead ? withOperators(lead) : null;
   }
 
   async create(data: CreateLeadInput) {
@@ -69,11 +81,13 @@ export class LeadRepository {
       ...(status && status !== "WON" ? { closedByUserId: null } : {}),
     };
 
-    return prisma.lead.update({
+    const lead = await prisma.lead.update({
       where: { id },
       data: nextData as Prisma.LeadUncheckedUpdateInput,
-      include: { assignedUser: true, plan: true, kanbanStage: true },
+      include: { assignedUser: true, plan: true, kanbanStage: true, conversations: operatorConversations },
     });
+    const { conversations, ...fields } = lead;
+    return { ...fields, operatorInstances: withOperators({ conversations }).operatorInstances };
   }
 
   async softDelete(id: string) {
