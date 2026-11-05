@@ -6,6 +6,7 @@ import { authErrorResponse } from "@/lib/api-errors";
 import { errorResponse, successResponse } from "@/lib/api-response";
 import { deliverInboxMessage } from "@/modules/conversas/services/inbox-delivery";
 export const runtime = "nodejs";
+export const maxDuration = 60;
 export async function POST(request: Request) {
   try {
     const user = await requireCurrentUser(); assertPermission(user, permissions.conversationsView);

@@ -59,3 +59,16 @@ test('devolver conversa em handoff sem responsável libera controle em um clique
  await f.service.toggleBotControl('conversation','admin',admin);
  assert.equal(f.row.ownerUserId,null);assert.equal(f.stats().ownerWrites,1);
 });
+
+test('lista e detalhe identificam operadora por instância e não pelo nome do bot',async()=>{
+ for(const instanceName of ['CLICK','GIGA CLICK']){
+  const f=fixture();f.row.agent.zapiInstanceId=instanceName;
+  assert.equal((await f.service.getDetail('conversation',admin))?.agent?.instanceName,instanceName);
+  const list=new InboxService({listConversations:async()=>[f.row],countConversations:async()=>1} as any);
+  assert.equal((await list.list({includeSummary:false,user:admin})).items[0].agent?.instanceName,instanceName);
+ }
+});
+test('destino de envio mantém autorização sem consultar mensagens ou dados privados',async()=>{
+ let query:any;const repo=new InboxRepository({chatConversation:{findFirst:async(q:any)=>{query=q;return null;}}} as any);
+ await repo.getDeliveryTarget('synthetic',employee);assert.equal(query.where.ownerUserId,employee.id);assert.equal(query.where.agent.zapiInstanceId,'CLICK');assert.deepEqual(query.select,{id:true,phone:true,agentId:true});
+});

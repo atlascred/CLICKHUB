@@ -43,7 +43,7 @@ type ConversationListItem = {
   state: string;
   updatedAt: string;
   lead: { id: string; name: string } | null;
-  agent: { id: string; name: string } | null;
+  agent: { id: string; name: string; instanceName?: string } | null;
   owner: ConversationUser | null;
   tags: ConversationTag[];
   botActive: boolean;
@@ -67,7 +67,7 @@ type ConversationDetail = {
     city?: string | null;
     state?: string | null;
   } | null;
-  agent: { id: string; name: string } | null;
+  agent: { id: string; name: string; instanceName?: string } | null;
   owner: ConversationUser | null;
   ownerUserId: string | null;
   tags: ConversationTag[];
@@ -134,6 +134,8 @@ export function ConversationCenter() {
   const [listError, setListError] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const sendingRef = useRef(false);
+  const detailCache = useRef(new Map<string, ConversationDetail>());
   const [isStartingConversation, setIsStartingConversation] = useState(false);
   const drafts = useRef(new Map<string, { message: string; file: File | null }>());
   const draftConversation = useRef<string | null>(null);
@@ -154,6 +156,7 @@ export function ConversationCenter() {
   const [agentScope, setAgentScope] = useState<AgentScope>("both");
   const [isFilterPopupOpen, setIsFilterPopupOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -260,7 +263,7 @@ export function ConversationCenter() {
     }
 
     try {
-    const response = await fetchApi(`/api/inbox?offset=${offset}&limit=${limit}&filter=${filter}&agent=${agentScope}&includeSummary=0`, { cache: "no-store", signal: controller.signal });
+    const response = await fetchApi(`/api/inbox?offset=${offset}&limit=${limit}&filter=${filter}&agent=${agentScope}&includeSummary=0&includeUsers=${payload ? "0" : "1"}`, { cache: "no-store", signal: controller.signal });
     const result = await response.json();
     if (controller.signal.aborted) return;
     if (!response.ok || result.status !== "success") {
@@ -272,6 +275,7 @@ export function ConversationCenter() {
 
     if (controller.signal.aborted) return;
     const nextPayload = normalizeConversationPayload(result.data);
+    if (!nextPayload.users.length && payload?.users.length) nextPayload.users = payload.users;
     if (nextPayload.conversations.summary) setSummary(nextPayload.conversations.summary);
     setPayload((current) => {
       if (reset || !current) {
@@ -353,7 +357,11 @@ export function ConversationCenter() {
       selectedIdRef.current = conversationId;
       setSelectedId(conversationId);
       setIsLoadingDetail(true);
-      if (detail?.id !== conversationId) setDetail(null);
+      if (detail?.id !== conversationId) {
+        const cached = detailCache.current.get(conversationId);
+        setDetail(cached ?? null);
+        if (cached) setIsLoadingDetail(false);
+      }
     }
     const currentOffset = appendOlder ? detail?.messagesPagination?.offset ?? 0 : 0;
     const limit = detail?.messagesPagination?.limit ?? 40;
@@ -418,6 +426,20 @@ export function ConversationCenter() {
       }
     }
   }
+
+  useEffect(() => {
+    if (!detail) return;
+    detailCache.current.delete(detail.id);
+    detailCache.current.set(detail.id, detail);
+    if (detailCache.current.size > 20) detailCache.current.delete(detailCache.current.keys().next().value!);
+  }, [detail]);
+
+  useEffect(() => {
+    const input = messageInputRef.current;
+    if (!input) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 128)}px`;
+  }, [message, detail?.id]);
 
   latestLoadRef.current = loadConversations;
 
@@ -625,11 +647,12 @@ export function ConversationCenter() {
   }
 
   async function sendMessage() {
-    if (!detail || isSending || (!message.trim() && !selectedFile)) return;
+    if (!detail || sendingRef.current || (!message.trim() && !selectedFile)) return;
     if (selectedFile && selectedFile.size > 3 * 1024 * 1024) { setStatusMessage("Use um arquivo de até 3 MB."); return; }
     if (selectedFile && !selectedFile.size) { setStatusMessage("O arquivo está vazio. Grave ou selecione novamente."); return; }
     const sentConversationId = detail.id;
     const sentDraft = { message, file: selectedFile };
+    sendingRef.current = true;
     setIsSending(true);
     try {
       const response = selectedFile ? await sendMedia() : await fetchApi("/api/inbox", {
@@ -648,9 +671,25 @@ export function ConversationCenter() {
         const stored = drafts.current.get(sentConversationId) ?? sentDraft;
         drafts.current.set(sentConversationId, clearSentDraft(stored, sentDraft, keepText));
       }
-      await loadConversations({ preferredId: selectedIdRef.current, reset: true, silent: true, limitOverride: Math.max(payload?.conversations.items.length ?? PAGE_SIZE, PAGE_SIZE) });
+      const sentMessage = result.data?.message as ConversationDetail["messages"][number] | undefined;
+      if (sentMessage?.id) {
+        if (selectedIdRef.current === sentConversationId) detailRequestRef.current?.abort();
+        setDetail(current => {
+          if (!current || current.id !== sentConversationId) return current;
+          const messages = mergeRecentMessages(current.messages, [sentMessage]);
+          return { ...current, updatedAt: sentMessage.createdAt, messages,
+            messagesPagination: current.messagesPagination ? { ...current.messagesPagination, total: current.messagesPagination.total + (messages.length > current.messages.length ? 1 : 0) } : undefined };
+        });
+        setPayload(current => current ? { ...current, conversations: { ...current.conversations,
+          items: current.conversations.items.map(item => item.id === sentConversationId ? { ...item, updatedAt: sentMessage.createdAt, lastMessage: sentMessage, hasPendingCustomerMessage: false } : item) } } : current);
+        if (selectedIdRef.current === sentConversationId) requestAnimationFrame(() => {
+          const node = messagesScrollRef.current; if (node) node.scrollTop = node.scrollHeight;
+        });
+      }
+      // Delivery is already confirmed. List refresh must not keep the composer locked.
+      void latestLoadRef.current({ preferredId: selectedIdRef.current, reset: true, silent: true, limitOverride: visibleCountRef.current });
     } catch(error) { setStatusMessage(error instanceof Error ? error.message : "Falha no envio. Sua mensagem foi mantida."); }
-    finally { setIsSending(false); }
+    finally { sendingRef.current = false; setIsSending(false); }
   }
 
   async function sendMedia() {
@@ -876,6 +915,7 @@ export function ConversationCenter() {
                   </div>
                   <p className="mt-1.5 truncate text-xs text-muted-foreground">{conversation.lastMessage?.body ?? "Sem mensagens ainda"}</p>
                   <div className="mt-2 flex flex-wrap gap-1 text-[10px]">
+                    <OperatorBadge instanceName={conversation.agent?.instanceName} />
                     <span className={`rounded-full px-2 py-1 ${conversation.botActive ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>
                       {conversation.state === "FINISHED" ? "Encerrada" : conversation.state === "BLOCKED" ? "Bloqueada" : conversation.botActive ? `${conversation.agent?.name ?? "Lily"} ativa` : "Assumida"}
                     </span>
@@ -916,6 +956,7 @@ export function ConversationCenter() {
                     <CardDescription>
                       {detail.phone} • {conversationStageLabels[detail.state] ?? "Em atendimento"}
                     </CardDescription>
+                    <div className="mt-1"><OperatorBadge instanceName={detail.agent?.instanceName} /></div>
                   </div>
                   <details className="relative">
                     <summary className="cursor-pointer rounded-lg border bg-background px-3 py-2 text-xs font-medium">Gerenciar atendimento</summary>
@@ -1069,7 +1110,7 @@ export function ConversationCenter() {
                 <div className="mt-auto shrink-0 space-y-2 border-t bg-card px-3 py-3">
                   <div className="flex flex-wrap gap-1 text-[10px] text-muted-foreground">
                     <span>{detail.botActive ? `${detail.agent?.name ?? "Lily"} pode responder nesta conversa.` : "Somente operador responde nesta conversa."}</span>
-                    <span className="hidden sm:inline">•</span>
+                    <span className="hidden sm:inline">• Enter envia · Shift+Enter quebra linha</span>
                     <span className="hidden sm:inline">{currentUser?.role === "ADMIN" ? "Administradores visualizam todas as conversas." : "Você visualiza apenas as conversas atribuídas a você."}</span>
                   </div>
                   <div className="flex items-end gap-2">
@@ -1082,8 +1123,14 @@ export function ConversationCenter() {
                       </Button>
                     </div>
                     <Textarea
+                      ref={messageInputRef}
                       value={message}
                       onChange={(event) => setMessage(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                        event.preventDefault();
+                        if (!event.repeat) void sendMessage();
+                      }}
                       placeholder={selectedFile ? selectedFile.type.startsWith("audio/") ? "Texto para enviar separadamente..." : "Digite uma legenda opcional..." : "Digite sua mensagem..."}
                       rows={1}
                       aria-label="Mensagem"
@@ -1268,4 +1315,9 @@ function tagDotClasses(color: string) {
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return <AppDialog title={title} onClose={onClose} className="md:max-w-2xl">{children}</AppDialog>;
+}
+
+function OperatorBadge({ instanceName }: { instanceName?: string }) {
+  if (!instanceName) return null;
+  return <span data-operator={instanceName} className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${instanceName === "GIGA CLICK" ? "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-200" : "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200"}`}>{whatsappAgentLabel(instanceName)}</span>;
 }

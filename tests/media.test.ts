@@ -82,3 +82,13 @@ test('confirmação numérica do servidor não aparece como entregue ao destinat
   assert.equal(extractEvolutionStatusUpdates({data:{key:{id:'synthetic'},update:{status:value}}})[0].status,status);
  }
 });
+
+test('source android/ios do dispositivo nunca é decodificado como mídia',async()=>{
+ for(const platform of ['android','ios','web','desktop','unknown']){
+  const raw=webhook('audioMessage');(raw.data as any).source=platform;
+  const payload={provider:'evolution',kind:'audio',mediaUrl:platform,raw};
+  const description=describeMedia(payload)!;assert.notEqual(description.source,platform);assert.equal(description.encrypted,true);
+  let called=0;global.fetch=async()=>{called++;return Response.json({base64,mimetype:'audio/ogg'});};
+  const downloaded=await withEvolutionInstance('GIGA CLICK',()=>downloadEvolutionMedia(payload));assert.equal(called,1);assert.deepEqual(downloaded.bytes,bytes);
+ }
+});

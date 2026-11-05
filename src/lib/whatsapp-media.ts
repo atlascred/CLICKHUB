@@ -34,9 +34,12 @@ export function describeMedia(value: unknown): { kind:MediaKind;mimeType:string;
   const kind=found?.[1] || (/audio|ptt|voice/.test(type+mime)?"audio":/image|imagem/.test(type+mime)?"imagem":/video/.test(type+mime)?"video":/document|pdf|application\//.test(type+mime)?"documento":null);
   if(!kind)return null;
   const candidates=[media,payload,data,content,message];
-  const explicit=text(media.source,payload.mediaUrl);
+  // Evolution's envelope.source is a device label (android/ios/web), never media bytes.
+  // Older stored payloads may also have that label copied into mediaUrl.
+  const actualSource = (value: unknown) => typeof value === "string" && !/^(android|ios|web|desktop|unknown)$/i.test(value.trim()) ? value : undefined;
+  const explicit=text(actualSource(media.source),actualSource(payload.mediaUrl));
   const inline=text(...candidates.flatMap(item=>[item.base64,typeof item.data==='string'?item.data:undefined]),explicit && /^data:/.test(explicit)?explicit:undefined,explicit && /^[A-Za-z0-9+/=\s]+$/.test(explicit)?explicit:undefined);
-  const source=inline || text(...candidates.flatMap(item=>[item.source,item.mediaUrl,item.url,item.imageUrl,item.audioUrl,item.videoUrl,item.documentUrl]));
+  const source=inline || text(actualSource(media.source), ...candidates.flatMap(item=>[actualSource(item.mediaUrl),item.url,item.imageUrl,item.audioUrl,item.videoUrl,item.documentUrl]));
   const mimeType=mime || (kind==='audio'?'audio/ogg':kind==='imagem'?'image/jpeg':kind==='video'?'video/mp4':'application/octet-stream');
   const extension=mimeType.includes('pdf')?'pdf':mimeType.includes('webm')?'webm':mimeType.includes('png')?'png':mimeType.includes('mpeg')?'mp3':kind==='audio'?'ogg':kind==='imagem'?'jpg':kind==='video'?'mp4':'bin';
   const fileName=text(media.fileName,payload.fileName,content.fileName,content.filename,data.fileName) || `${kind}.${extension}`;

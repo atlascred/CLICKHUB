@@ -1,3 +1,4 @@
+import { attachmentForMessage } from "@/lib/whatsapp-media";
 import { buildConversationAccessWhere } from "@/repositories/inbox.repository";
 import { resolveLeadAgentScope } from "@/lib/lead-source-access";
 import { saveEvolutionOutbound } from "@/repositories/evolution-outbound.repository";
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
             fileName: body.fileName,
             mimeType: body.mimeType,
           })
-        : await sendEvolutionTextMessage({ to: destinationPhone, message: body.message as string, delayTypingSeconds: 2 });
+        : await sendEvolutionTextMessage({ to: destinationPhone, message: body.message as string });
 
     const rawProviderId = resolveEvolutionMessageId(result);
     const providerId = rawProviderId && agent?.zapiInstanceId ? scopedEvolutionId(agent.zapiInstanceId, rawProviderId) : rawProviderId;
@@ -100,7 +101,7 @@ export async function POST(request: Request) {
       data: { updatedAt: new Date() },
     });
 
-    return NextResponse.json(successResponse("Mensagem enviada.", { result, conversationId: savedMessage.conversationId }));
+    return NextResponse.json(successResponse("Mensagem enviada.", { conversationId: savedMessage.conversationId, message: { id: savedMessage.id, direction: "outbound", body: content, createdAt: savedMessage.createdAt.toISOString(), attachment: attachmentForMessage(savedMessage.id, messageData.rawPayload) } }));
     };
     return agent?.zapiInstanceId ? await withEvolutionInstance(agent.zapiInstanceId, execute) : await execute();
   } catch (error) {

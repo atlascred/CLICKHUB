@@ -31,6 +31,7 @@ export class InboxRepository {
           select: {
             id: true,
             name: true,
+            zapiInstanceId: true,
           },
         },
         owner: {
@@ -72,8 +73,8 @@ export class InboxRepository {
         ownerUserId: true,
         memory: true,
         lead: true,
-        agent: true,
-        owner: true,
+        agent: { select: { id: true, name: true, zapiInstanceId: true } },
+        owner: { select: { id: true, name: true, role: true } },
         _count: {
           select: {
             messages: true,
@@ -92,6 +93,13 @@ export class InboxRepository {
           take: messages?.take ?? 40,
         },
       },
+    });
+  }
+
+  async getDeliveryTarget(id: string, user: LeadAccessUser) {
+    return this.db.chatConversation.findFirst({
+      where: { id, ...buildConversationAccessWhere(user) },
+      select: { id: true, phone: true, agentId: true },
     });
   }
 

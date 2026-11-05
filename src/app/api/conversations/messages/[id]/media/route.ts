@@ -1,3 +1,4 @@
+import { createMediaDownloadCache } from "@/lib/media-download-cache";
 import { withEvolutionInstance } from "@/services/evolution-context";
 import { NextResponse } from "next/server";
 import { permissions } from "@/constants/permissions";
@@ -12,6 +13,7 @@ import { describeMedia, record } from "@/lib/whatsapp-media";
 import { mediaResponse } from "@/lib/media-response";
 import { buildConversationAccessWhere } from "@/repositories/inbox.repository";
 
+const cachedDownload = createMediaDownloadCache();
 export const runtime="nodejs";
 export const maxDuration=60;
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -23,13 +25,16 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const payload=record(message.rawPayload),media=describeMedia(payload);
     if(!media)return NextResponse.json(errorResponse("Mensagem sem anexo.","NOT_FOUND"),{status:404});
     if(payload.provider==='meta'&&typeof payload.mediaId==='string'){
-      const downloaded=await downloadMetaMediaBytes(payload.mediaId);
+      const downloaded=await cachedDownload(`meta:${id}`,async()=>{
+        const result=await downloadMetaMediaBytes(payload.mediaId as string);
+        return { bytes:new Uint8Array(result.bytes),mimeType:result.mimeType||media.mimeType,fileName:media.fileName };
+      });
       return mediaResponse(request,new Uint8Array(downloaded.bytes),downloaded.mimeType||media.mimeType,media.fileName);
     }
     const instance=message.conversation.agent?.zapiInstanceId;
     if(!instance)throw new Error("Conversa sem instância de origem identificada.");
     return await withEvolutionInstance(instance,async()=>{
-      const downloaded=await downloadEvolutionMedia(payload);
+      const downloaded=await cachedDownload(`evolution:${instance}:${id}`,()=>downloadEvolutionMedia(payload));
       return mediaResponse(request,downloaded.bytes,downloaded.mimeType,downloaded.fileName);
     });
   }catch(error){return authErrorResponse(error)??NextResponse.json(errorResponse(error instanceof Error?error.message:"Não foi possível abrir o anexo.","MEDIA_DOWNLOAD_ERROR"),{status:502});}

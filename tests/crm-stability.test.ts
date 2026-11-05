@@ -67,3 +67,13 @@ test('conversa inacessível é recusada antes de atualização ou exclusão',asy
  const service=new ConversationService({findConversationById:async()=>null,updateManualConversation:async()=>writes++,softDeleteConversation:async()=>writes++});
  await assert.rejects(service.update({id:'synthetic'}),/FORBIDDEN/);await assert.rejects(service.delete('synthetic'),/FORBIDDEN/);assert.equal(writes,0);
 });
+
+test('cache de mídia compartilha download, isola instâncias, expira e não guarda falhas',async()=>{
+ const {createMediaDownloadCache}=require('../src/lib/media-download-cache');let clock=0,calls=0;
+ const get=createMediaDownloadCache(8,50,()=>clock);
+ const download=async()=>{calls++;return{bytes:new Uint8Array(4),mimeType:'audio/ogg',fileName:'a.ogg'};};
+ await Promise.all([get('CLICK:a',download),get('CLICK:a',download)]);assert.equal(calls,1);
+ await get('GIGA CLICK:a',download);assert.equal(calls,2);clock=51;await get('CLICK:a',download);assert.equal(calls,3);
+ await assert.rejects(get('failure',async()=>{throw Error('temporary');}));await get('failure',download);assert.equal(calls,4);
+ await get('third',download);await get('CLICK:a',download);assert.equal(calls,6);
+});

@@ -6,6 +6,7 @@ import { permissions } from "@/constants/permissions";
 import { requireCurrentUser } from "@/lib/auth-context";
 import { InboxService } from "@/modules/conversas/services/inbox.service";
 
+export const maxDuration = 60;
 const conversationService = new InboxService();
 
 export async function GET(request: Request) {
@@ -42,7 +43,7 @@ export async function GET(request: Request) {
         filter: filter === "unavailable" || filter === "finished" || filter === "stalled" ? filter : "all",
       }),
       // Assignment options are supplementary; do not discard the inbox if they fail.
-      conversationService.listAssignableUsers().catch(() => []),
+      searchParams.get("includeUsers") === "0" ? Promise.resolve([]) : conversationService.listAssignableUsers().catch(() => []),
     ]);
 
     return NextResponse.json(successResponse("Conversas consultadas.", { conversations, users }));

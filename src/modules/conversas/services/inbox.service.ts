@@ -82,7 +82,7 @@ export class InboxService {
         state: conversation.state,
         updatedAt: conversation.updatedAt.toISOString(),
         lead: conversation.lead ? { id: conversation.lead.id, name: conversation.lead.name } : null,
-        agent: conversation.agent ? { id: conversation.agent.id, name: conversation.agent.name } : null,
+        agent: conversation.agent ? { id: conversation.agent.id, name: conversation.agent.name, instanceName: conversation.agent.zapiInstanceId } : null,
         owner: conversation.owner ? { id: conversation.owner.id, name: conversation.owner.name, role: conversation.owner.role } : null,
         tags: memory.tags ?? [],
         botActive: !conversation.ownerUserId && memory.humanTakeover !== true && memory.blocked !== true && !["MANUAL", "BLOCKED", "HUMAN_HANDOFF", "FINISHED"].includes(conversation.state),
@@ -165,7 +165,7 @@ export class InboxService {
             state: conversation.lead.state,
           }
         : null,
-      agent: conversation.agent ? { id: conversation.agent.id, name: conversation.agent.name } : null,
+      agent: conversation.agent ? { id: conversation.agent.id, name: conversation.agent.name, instanceName: conversation.agent.zapiInstanceId } : null,
       owner: conversation.owner ? { id: conversation.owner.id, name: conversation.owner.name, role: conversation.owner.role } : null,
       ownerUserId: conversation.ownerUserId,
       tags: memory.tags ?? [],
