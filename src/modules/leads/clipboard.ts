@@ -42,7 +42,7 @@ export function buildLeadCopyText(lead: LeadCopyData, kind: LeadCopyKind) {
 
   if (kind === "consulta") {
     const address = [[street, number].filter(Boolean).join(" "), text(lead.neighborhood), text(lead.city), text(lead.state), complement].filter(Boolean).join(" - ");
-    return ["CONSULTA:", "", ...customer, "", `📍 CEP: ${cep}`, `🏠 Endereço: ${address}`].join("\n");
+    return [`CONSULTA: ${customer[0]}`, ...customer.slice(1), "", `📍 CEP: ${cep}`, `🏠 Endereço: ${address}`].join("\n");
   }
 
   let phone = text(lead.phone).replace(/\D/g, "");
@@ -50,7 +50,7 @@ export function buildLeadCopyText(lead: LeadCopyData, kind: LeadCopyKind) {
   const addressBase = [street, number ? `nº ${number}` : "", complement, text(lead.neighborhood)].filter(Boolean).join(", ");
   const address = [addressBase, cityState].filter(Boolean).join(" – ");
   return [
-    "SUBIR VENDA:", "", `🛜 PLANO: ${text(lead.planName) || text(lead.plan?.name)}`,
+    `SUBIR VENDA: 🛜 PLANO: ${text(lead.planName) || text(lead.plan?.name)}`,
     customer[0], "👤 Nome da Mãe: ", `📲 WhatsApp: ${phone}`, customer[1], customer[2],
     `📧 E-mail: ${text(lead.email)}`, `📍 CEP: ${cep}`, `🏠 Endereço: ${address}`,
     `📅 Vencimento: ${lead.billingDueDay ? `Dia ${lead.billingDueDay}` : ""}`,
