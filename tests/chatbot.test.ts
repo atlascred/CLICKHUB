@@ -689,3 +689,14 @@ test('recibo Evolution guarda o ID real e preserva idempotência do bot após ec
     if (previousInstances === undefined) delete process.env.EVOLUTION_INSTANCES_JSON; else process.env.EVOLUTION_INSTANCES_JSON = previousInstances;
   }
 });
+
+test('follow-up aguarda duas horas e resposta do cliente retoma o campo pendente com os dados preservados', async () => {
+  const {FollowUpService}=require('../src/modules/chatbot/services/follow-up.service');
+  const s=simulator('Retomada após follow-up',{state:'ASK_EMAIL',memory:{name:'Cliente Sintético',cep:'01001000',streetNumber:'123',complement:'Casa',cpfCnpj:fixtureDocument(),birthDate:'1990-01-01',planId:'plan-1',planName:'600 MEGA',planValue:55}});
+  const t0=new Date('2026-11-04T12:00:00Z'),memory=clone(s.conversation.memory);
+  const c={id:s.conversation.id,phone:'5511900000000',state:s.conversation.state,memory:s.conversation.memory,ownerUserId:null,updatedAt:t0,agent:{id:'lily',active:true,deletedAt:null,zapiInstanceId:'CLICK'},messages:[{id:'last-bot',direction:'outbound',body:'Qual é seu e-mail?',createdAt:t0,rawPayload:{inReplyTo:['last-customer']}},{id:'last-customer',direction:'inbound',body:'Dados fictícios',createdAt:new Date(t0.getTime()-1000),rawPayload:{}}]};
+  const repo={settings:async()=>({enabled:true,instances:['CLICK'],activatedAt:t0.toISOString()}),candidates:async()=>[c],get:async()=>c,claim:async()=>true,mark:async()=>{},save:async(input:any)=>{s.messages.set('follow-up',{...input,direction:'outbound',rawPayload:{followUp:true}});}};
+  const followUp=new FollowUpService(repo as any,async(_instance:string,_phone:string,body:string)=>{s.sends.push(body);return{key:{id:'followup-message'}};},()=>new Date(t0.getTime()+2*60*60*1000));
+  assert.equal((await followUp.process()).sent,1);assert.equal(s.conversation.state,'ASK_EMAIL');assert.deepEqual(s.conversation.memory,memory);assert.match(s.sends.at(-1)!,/e-mail/);
+  await s.say('cliente@example.invalid','response-after-reminder');assert.equal(s.conversation.state,'ASK_BILLING_DUE_DAY');assert.equal((s.conversation.memory as any).name,'Cliente Sintético');assert.equal((s.conversation.memory as any).cpfCnpj,(memory as any).cpfCnpj);assert.equal((s.conversation.memory as any).planId,'plan-1');assert.equal(s.leads.length,0);
+});

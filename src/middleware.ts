@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authCookieName, verifyAuthToken } from "@/lib/jwt";
 
-const publicAssets = new Set(["/manifest.webmanifest", "/sw.js", "/offline.html"]);
+const publicPaths = new Set(["/manifest.webmanifest", "/sw.js", "/offline.html", "/api/cron/conversations-follow-up"]);
 
 const publicRoutes = [
   "/login",
@@ -17,7 +17,7 @@ const publicRoutes = [
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  if (publicAssets.has(pathname) || pathname.startsWith("/pwa/") || publicRoutes.some((route) => pathname.startsWith(route))) {
+  if (publicPaths.has(pathname) || pathname.startsWith("/pwa/") || publicRoutes.some((route) => pathname.startsWith(route))) {
     return NextResponse.next();
   }
 
