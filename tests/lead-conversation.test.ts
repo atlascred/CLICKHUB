@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {LeadConversationService} from '../src/modules/leads/services/lead-conversation.service';
 const user:any={id:'user',role:'ADMIN',permissions:{}};
 function setup({lead:anyLead={name:'Cliente',phone:'(11) 90000-0000'},count=1,conversations=[{id:'vivo',agentId:'agent-vivo',agent:{zapiInstanceId:'GIGA CLICK'}}]}:any={}){
- const queries:any[]=[];const service=new LeadConversationService({findById:async(id:any,access:any)=>{queries.push({leadId:id,access});return anyLead;}} as any,{chatConversation:{count:async(q:any)=>{queries.push(q);return count;},findMany:async(q:any)=>{queries.push(q);return conversations;}}} as any);return{service,queries};
+ const queries:any[]=[];const service=new LeadConversationService({findContactById:async(id:any,access:any)=>{queries.push({leadId:id,access});return anyLead;}} as any,{chatConversation:{count:async(q:any)=>{queries.push(q);return count;},findMany:async(q:any)=>{queries.push(q);return conversations;}}} as any);return{service,queries};
 }
 test('abre conversa vinculada à VIVO sem confundir com NIO ou usar WhatsApp externo',async()=>{
  const f=setup();const r=await f.service.resolve('lead',user);assert.equal(r.status,'success');if(r.status!=='success')return;assert.deepEqual(r.conversations,[{id:'vivo',agentId:'agent-vivo',instanceName:'GIGA CLICK'}]);assert.equal(f.queries[2].where.leadId,'lead');

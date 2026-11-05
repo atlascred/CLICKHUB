@@ -7,7 +7,7 @@ import type { LeadAccessUser } from "@/lib/lead-source-access";
 export class LeadConversationService {
   constructor(private readonly leads = new LeadRepository(), private readonly db = prisma) {}
   async resolve(id: string, user: LeadAccessUser) {
-    const lead = await this.leads.findById(id, user);
+    const lead = await this.leads.findContactById(id, user);
     if (!lead) return { status: "not_found" as const };
     const select = { id: true, agentId: true, agent: { select: { zapiInstanceId: true } } } as const;
     const linkedCount = await this.db.chatConversation.count({ where: { leadId: id, deletedAt: null } });
