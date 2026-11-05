@@ -722,3 +722,48 @@ test('e-mail extraído de mídia é preservado em vez do marcador do anexo',asyn
  await s.say('[Áudio recebido]',undefined,{extractedData:{email:'cliente@example.com'}});
  assert.equal(s.conversation.state,'ASK_BILLING_DUE_DAY');assert.equal((s.conversation.memory as any).email,'cliente@example.com');
 });
+
+function nioPricingSimulator(state='ASK_CEP',memory:object={},instance='CLICK') {
+ const {nioNormalPlans}=require('../src/modules/chatbot/nio-regional-pricing');
+ const normal=nioNormalPlans.map((p:any,i:number)=>({...p,id:`nio-normal-${i}`}));
+ const agent={id:'nio-regional-test',name:'Lily',zapiInstanceId:instance,plans:[...plans,...normal],rules:{nioRegionalPricing:{version:1,btuPlanIds:plans.map(p=>p.id),normalPlanIds:normal.map((p:any)=>p.id)}},enableReplyDelay:false,enableTyping:false};
+ const s=simulator('NIO regional '+state,{state,memory});s.repo.getAgentByInstance=async()=>agent as any;
+ (s.engine as any).cepRepository={findByCep:async(cep:string)=>cep==='99999999'?null:{cep,available:true,city:cep==='13010000'?'Campinas':'São Paulo',state:'SP',street:'Rua Sintética',neighborhood:'Centro'}};
+ return {...s,agent,normal};
+}
+for(const [cep,price]of [['13010000','55,00'],['01001000','110,00']])test('NIO catálogo regional após CEP '+cep,async()=>{
+ const s=nioPricingSimulator();await s.say(cep);assert.equal(s.conversation.state,'ASK_STREET_NUMBER');await s.say('123');await s.say('não');assert.equal(s.conversation.state,'CHOOSE_PLAN');assert.ok(s.sends.at(-1)!.includes(price));
+ if(cep==='01001000'){for(const p of ['140,00','170,00','200,00'])assert.ok(s.sends.at(-1)!.includes(p));assert.ok(!s.sends.at(-1)!.includes('55,00'));}
+});
+test('NIO pede CEP antes de oferecer preços e não inventa cidade de CEP desconhecido',async()=>{
+ const s=nioPricingSimulator('START');await s.say('quais planos?');assert.equal(s.conversation.state,'ASK_CEP');assert.ok(!s.sends.at(-1)!.includes('R$'));await s.say('99999999');assert.equal(s.conversation.state,'ASK_CEP');assert.ok(!s.sends.at(-1)!.includes('R$'));
+});
+test('NIO explica preço do anúncio fora BTU e preserva etapa',async()=>{
+ const s=nioPricingSimulator('ASK_EMAIL',{cep:'01001000'});await s.say('por que o valor está diferente do anúncio?');assert.equal(s.conversation.state,'ASK_EMAIL');assert.match(s.sends.at(-1)!,/não está dentro dessa promoção especial/);assert.match(s.sends.at(-1)!,/110,00/);
+ const b=nioPricingSimulator('CHOOSE_PLAN',{cep:'13010000'});await b.say('preço diferente do anúncio');assert.match(b.sends.at(-1)!,/participa da promoção especial BTU/);assert.ok(!b.sends.at(-1)!.includes('110,00'));
+});
+test('NIO invalida plano especial fora BTU antes de confirmar cadastro',async()=>{
+ const s=nioPricingSimulator('CONFIRM_DATA',{cep:'01001000',planId:plans[0].id,planValue:55});await s.say('valor diferente do anúncio');assert.equal(s.conversation.state,'CHOOSE_PLAN');assert.equal((s.conversation.memory as any).planId,undefined);assert.equal(s.leads.length,0);assert.match(s.sends.at(-1)!,/não está dentro da promoção especial/);
+});
+test('NIO correção de CEP exige nova escolha ao mudar de faixa',async()=>{
+ const s=nioPricingSimulator('CORRECTION',{cep:'13010000',city:'Campinas',state:'SP',pricingCep:'13010000',pricingCity:'Campinas',pricingState:'SP',correctionField:'address',planId:plans[0].id,planValue:55});await s.say('CEP 01001000');assert.equal(s.conversation.state,'CHOOSE_PLAN');assert.equal((s.conversation.memory as any).city,'São Paulo');assert.equal((s.conversation.memory as any).planId,undefined);assert.match(s.sends.at(-1)!,/200,00/);
+});
+test('NIO opção 4 e dois chips selecionam plano de R$200',async()=>{
+ for(const choice of ['4','quero 1 giga com 2 chips']){const s=nioPricingSimulator('CHOOSE_PLAN',{cep:'01001000'});await s.say(choice);assert.equal((s.conversation.memory as any).planValue,200);assert.equal((s.conversation.memory as any).planId,s.normal[3].id);}
+});
+test('NIO protege cidade consultada contra cidade extraída de mídia',async()=>{
+ const s=nioPricingSimulator('ASK_EMAIL',{cep:'01001000',city:'São Paulo',state:'SP',pricingCep:'01001000',pricingCity:'São Paulo',pricingState:'SP'});await s.say('preço diferente do anúncio',undefined,{extractedData:{city:'Campinas',state:'SP'}});assert.equal((s.conversation.memory as any).city,'São Paulo');assert.match(s.sends.at(-1)!,/110,00/);
+});
+test('VIVO ignora política regional mesmo anexada por engano',async()=>{
+ const s=nioPricingSimulator('ASK_COMPLEMENT',{cep:'01001000'},'GIGA CLICK');await s.say('não');assert.equal(s.conversation.state,'CHOOSE_PLAN');assert.match(s.sends.at(-1)!,/55,00/);assert.equal((s.conversation.memory as any).pricingCep,undefined);
+});
+test('NIO grava venda normal com preço e benefícios corretos',async()=>{
+ const s=nioPricingSimulator('CHOOSE_PLAN',{cep:'01001000',streetNumber:'123',complement:'Casa'});await s.say('4');await s.say('Cliente Sintético');await s.say(fixtureDocument());await s.say('01/01/1995');await s.say('não sei email');await s.say('10');assert.equal(s.conversation.state,'CONFIRM_DATA');assert.match(s.sends.at(-1)!,/200,00/);await s.say('sim');assert.equal(s.conversation.state,'FINISHED');assert.equal(s.leads[0].expectedValue,200);assert.equal(s.leads[0].planId,s.normal[3].id);
+});
+test('NIO recomendação, lista e upsell usam somente faixa normal',async()=>{
+ const s=nioPricingSimulator('CHOOSE_PLAN',{cep:'01001000'});await s.say('Qual plano é o mais barato?');assert.match(s.sends.at(-1)!,/110,00/);await s.say('quais os planos?');assert.match(s.sends.at(-1)!,/200,00/);await s.say('1');assert.equal((s.conversation.memory as any).planValue,110);const upsell=(s.conversation.memory as any).pendingUpsellPlanId;if(upsell)assert.ok(s.normal.some((p:any)=>p.id===upsell));assert.ok(!s.sends.join('\n').includes('55,00'));
+});
+test('NIO prefere município do ViaCEP ao registro local desatualizado',async()=>{
+ const s=nioPricingSimulator();const previous=global.fetch;global.fetch=async()=>({ok:true,json:async()=>({cep:'01001-000',localidade:'São Paulo',uf:'SP',logradouro:'Praça Sintética',bairro:'Centro'})}) as Response;
+ try{await s.say('13010000');}finally{global.fetch=previous;}assert.equal((s.conversation.memory as any).city,'São Paulo');assert.equal((s.conversation.memory as any).pricingCity,'São Paulo');
+});

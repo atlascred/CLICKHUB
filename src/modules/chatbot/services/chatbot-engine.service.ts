@@ -1,3 +1,4 @@
+import { nioPricingPolicy, nioRegionalPlans, nioCityTier, isNioPriceQuestion } from "@/modules/chatbot/nio-regional-pricing";
 import { coverageDataset, coverageUnavailable } from "@/modules/chatbot/coverage-policy";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -161,7 +162,7 @@ export class ChatbotEngineService {
       throw new Error("Entrega incerta; revisão humana necessária antes de reenviar.");
     }
     let interpretation: ConversationInterpretation | null = null;
-    if (!pending && needsConversationalInterpretation(input.message, conversation.state, currentMemory, agent?.plans ?? [])) {
+    if (!pending && !(nioPricingPolicy(agent) && isNioPriceQuestion(input.message)) && needsConversationalInterpretation(input.message, conversation.state, currentMemory, agent?.plans ?? [])) {
       try {
         interpretation = await this.openAiService.interpretConversation({
           message: input.message, state: conversation.state,
@@ -331,9 +332,27 @@ export class ChatbotEngineService {
     if (earlyName) memory.name = earlyName;
     const earlyCep = originalText.match(/\bcep\s*[:=]?\s*(\d{5}[- ]?\d{3})\b/i)?.[1];
     if (earlyCep) memory.cep = onlyDigits(earlyCep);
-    const plans = await this.getPlans(input.agent);
+    let plans = await this.getPlans(input.agent, memory);
     if ((input.parts?.length ?? 0) > 1) applyBatchData(memory, input.parts!, input.state, plans);
     if (!["START", "ASK_CEP", "CORRECTION"].includes(input.state) && memory.cep && memory.cep !== input.memory.cep && coverageDataset(input.agent) && !(await this.validateCoverage(memory.cep, input.agent)).available) return coverageUnavailable(memory, memory.cep);
+    const regionalPolicy = nioPricingPolicy(input.agent);
+    const pricingControl = isRestartRequest(text) || isHandoffRequest(text) || hasInjection(originalText);
+    if (regionalPolicy && memory.cep && !pricingControl && input.state !== "CORRECTION") {
+      if (!await this.resolveNioPricingAddress(memory, input.agent)) {
+        return { state: "ASK_CEP", memory, reply: "Não consegui identificar a cidade e o estado deste CEP. Pode confirmar os 8 números do CEP da instalação para consultar os planos corretos?" };
+      }
+      plans = await this.getPlans(input.agent, memory);
+      if ((input.parts?.length ?? 0) > 1) applyBatchData(memory, input.parts!, input.state, plans);
+      if (memory.planId && !plans.some(plan => plan.id === memory.planId)) {
+        clearRegionalPlan(memory);
+        if (!["START", "ASK_CEP", "ASK_STREET_NUMBER", "ASK_COMPLEMENT"].includes(input.state)) {
+          return { state: "CHOOSE_PLAN", memory, reply: `${isNioPriceQuestion(originalText) && nioCityTier(memory.city, memory.state) === "normal" ? "Sua cidade não está dentro da promoção especial do anúncio. Por isso, os valores disponíveis são os planos normais.\n\n" : ""}Confira os planos disponíveis para ${memory.city}/${memory.state}:\n\n${formatPlanList(plans)}\n\nQual opção você prefere?` };
+        }
+      }
+    }
+    if (regionalPolicy && !pricingControl && !memory.cep && (asksForPlanList(text) || asksForPlanRecommendation(text) || isPlanQuestion(text) || isNioPriceQuestion(text))) {
+      return { state: "ASK_CEP", memory, reply: "Para consultar os planos e valores disponíveis na sua cidade, me informe o CEP da instalação com 8 números, por favor." };
+    }
     const mentionedPlan = selectPlan(evidence.plan || text, plans);
     const explicitPlan = (Boolean(evidence.plan) || /(?:trocar|mudar|alterar|prefiro|quero|plano|ficar com|opcao)/i.test(normalizeText(text)))
       && /\b(600|700|800|1000|1\s*giga|seiscentos|setecentos|oitocentos|disney)\b/i.test(normalizeText(text))
@@ -366,6 +385,14 @@ export class ChatbotEngineService {
         memory,
         reply: "Combinado, vou sinalizar para uma consultora humana continuar seu atendimento por aqui. 😊",
       };
+    }
+
+    if (regionalPolicy && isNioPriceQuestion(originalText)) {
+      if (!memory.city || !memory.state) return { state: "ASK_CEP", memory, reply: "Me informe o CEP da instalação para conferir os planos e a promoção disponíveis na sua cidade, por favor." };
+      const explanation = nioCityTier(memory.city, memory.state) === "normal"
+        ? `A promoção especial do anúncio é válida apenas para algumas cidades. A sua cidade, ${memory.city}/${memory.state}, não está dentro dessa promoção especial. Por isso, os valores disponíveis para você são os planos normais.`
+        : `Sua cidade, ${memory.city}/${memory.state}, participa da promoção especial BTU. Estes são os valores especiais disponíveis para ela.`;
+      return { state: input.state, memory, reply: `${explanation}\n\n${formatPlanList(plans)}\n\n${promptForState(input.state, firstName)}` };
     }
 
     if (input.extractedData && text === originalText && !hasUsefulExtractedDataForState(input.state, input.extractedData)) {
@@ -401,7 +428,7 @@ export class ChatbotEngineService {
       return { state: input.state, memory, reply: `Entendo a sua frustração. Vamos por partes, sem repetir o que você já informou. Se preferir, pode pedir uma atendente.\n\n${promptForState(input.state, firstName)}` };
     }
     if (asksForPlanRecommendation(text) || input.interpretation?.intent === "recommendation") {
-      const plans = await this.getPlans(input.agent);
+      const plans = await this.getPlans(input.agent, memory);
       const recommended = findRecommendedPlan(plans, text);
       const recommendation = recommended
         ? `Para essa necessidade, recomendo o ${recommended.name} por ${formatMoney(Number(recommended.price))}/mês.\n${recommended.description ?? "Confira os benefícios cadastrados."}`
@@ -414,7 +441,7 @@ export class ChatbotEngineService {
     }
 
     if (asksForPlanList(text) || isPlanQuestion(text)) {
-      const plans = await this.getPlans(input.agent);
+      const plans = await this.getPlans(input.agent, memory);
       return {
         state: input.state,
         memory,
@@ -446,7 +473,9 @@ export class ChatbotEngineService {
     }
 
     if (input.state === "START" && memory.cep) {
-      const coverage = await this.validateCoverage(memory.cep, input.agent);
+      const coverage = regionalPolicy && memory.pricingCep === memory.cep
+        ? { available: true, street: memory.address, neighborhood: memory.neighborhood, city: memory.city, state: memory.state }
+        : await this.validateCoverage(memory.cep, input.agent);
       if (coverage.available === false) return coverageUnavailable(memory, memory.cep);
       applyAddress(memory, { street: coverage?.street ?? undefined, city: coverage?.city ?? undefined, state: coverage?.state ?? undefined, neighborhood: coverage?.neighborhood ?? undefined });
       const next = afterKnownAddress(memory, plans);
@@ -470,7 +499,9 @@ export class ChatbotEngineService {
         };
       }
 
-      const coverage = await this.validateCoverage(cep, input.agent);
+      const coverage = regionalPolicy && memory.pricingCep === cep
+        ? { available: true, street: memory.address, neighborhood: memory.neighborhood, city: memory.city, state: memory.state }
+        : await this.validateCoverage(cep, input.agent);
       if (coverage.available === false) return coverageUnavailable(memory, cep);
       const viaCep = coverage?.street && coverage?.city && coverage?.state ? null : await fetchViaCep(cep);
       memory.cep = cep;
@@ -506,7 +537,7 @@ export class ChatbotEngineService {
     if (input.state === "ASK_COMPLEMENT") {
       memory.complement = normalizeComplement(text);
       if (memory.planId) return nextCustomerDataResponse(memory, `Endereço registrado.\n\n`);
-      const plans = await this.getPlans(input.agent);
+      const plans = await this.getPlans(input.agent, memory);
       return {
         state: "CHOOSE_PLAN",
         memory,
@@ -516,7 +547,7 @@ export class ChatbotEngineService {
     }
 
     if (input.state === "ASK_ADDRESS_CONFIRM") {
-      const plans = await this.getPlans(input.agent);
+      const plans = await this.getPlans(input.agent, memory);
       return {
         state: "CHOOSE_PLAN",
         memory,
@@ -533,7 +564,7 @@ export class ChatbotEngineService {
     }
 
     if (input.state === "CHOOSE_PLAN") {
-      const plans = await this.getPlans(input.agent);
+      const plans = await this.getPlans(input.agent, memory);
       const selectedPlan = selectPlan(text, plans);
 
       if (memory.pendingUpsellPlanId && memory.planId) {
@@ -712,6 +743,14 @@ export class ChatbotEngineService {
       const corrected = await this.applyCorrection(text, { ...memory, correctionField }, input.agent);
       if (corrected.cep && coverageDataset(input.agent) && !(await this.validateCoverage(corrected.cep, input.agent)).available) return coverageUnavailable(corrected, corrected.cep);
       corrected.correctionField = undefined;
+      if (regionalPolicy) {
+        if (!await this.resolveNioPricingAddress(corrected, input.agent)) return { state: "ASK_CEP", memory: corrected, reply: "Pode confirmar o CEP da instalação? Preciso identificar a cidade para consultar os valores corretos." };
+        const correctedPlans = await this.getPlans(input.agent, corrected);
+        if (corrected.planId && !correctedPlans.some(plan => plan.id === corrected.planId)) {
+          clearRegionalPlan(corrected);
+          return { state: "CHOOSE_PLAN", memory: corrected, reply: `Com o CEP atualizado, estes são os planos disponíveis para ${corrected.city}/${corrected.state}:\n\n${formatPlanList(correctedPlans)}\n\nQual opção você prefere?` };
+        }
+      }
       return {
         state: "CONFIRM_DATA",
         memory: corrected,
@@ -735,10 +774,28 @@ export class ChatbotEngineService {
     };
   }
 
-  private async getPlans(agent: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>) {
-    if (Array.isArray(agent?.plans)) return agent.plans;
-    if (!agent) return this.chatbotRepository.listActivePlans();
-    return this.chatbotRepository.listActivePlans(agent.id);
+  private async getPlans(agent: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>, memory: ChatMemory = {}) {
+    const all = Array.isArray(agent?.plans) ? agent.plans : await this.chatbotRepository.listActivePlans(agent?.id);
+    return nioRegionalPlans(agent, memory, all);
+  }
+
+  private async resolveNioPricingAddress(memory: ChatMemory, agent: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>) {
+    if (!nioPricingPolicy(agent)) return true;
+    if (memory.pricingCep === memory.cep && memory.pricingCity && memory.pricingState) {
+      memory.city = memory.pricingCity; memory.state = memory.pricingState; return true;
+    }
+    if (!memory.cep || !/^\d{8}$/.test(memory.cep)) return false;
+    const coverage = await this.validateCoverage(memory.cep, agent);
+    const viaCep = await fetchViaCep(memory.cep);
+    const city = viaCep?.city || coverage.city;
+    const state = viaCep?.state || coverage.state;
+    // Never retain the old municipality when a changed CEP cannot be resolved.
+    memory.city = city || undefined; memory.state = state || undefined;
+    memory.address = viaCep?.street || coverage.street || undefined;
+    memory.neighborhood = viaCep?.neighborhood || coverage.neighborhood || undefined;
+    if (!nioCityTier(city, state)) { memory.pricingCep = undefined; memory.pricingCity = undefined; memory.pricingState = undefined; clearRegionalPlan(memory); return false; }
+    memory.pricingCep = memory.cep; memory.pricingCity = city || undefined; memory.pricingState = state || undefined;
+    return true;
   }
 
   private selectPlanAndConfirm(input: { memory: ChatMemory; plan: PlanCandidate; prefix?: string }): NextBotResponse {
@@ -800,7 +857,7 @@ export class ChatbotEngineService {
   ) {
     const corrected = { ...memory };
     const normalized = normalizeText(text);
-    const plans = await this.getPlans(agent);
+    const plans = await this.getPlans(agent, corrected);
     const selectedPlan = selectPlan(text, plans);
     const billingDay = parseBillingDay(text);
     const email = parseEmail(text);
@@ -977,6 +1034,9 @@ type ChatMemory = {
   birthDate?: string;
   email?: string;
   emailCollected?: boolean;
+  pricingCep?: string;
+  pricingCity?: string;
+  pricingState?: string;
   billingDueDay?: number;
   planId?: string;
   planName?: string;
@@ -1483,6 +1543,10 @@ function selectPlan(text: string, plans: PlanCandidate[]) {
   // A shared speed must not select the base plan when a named benefit was requested.
   if (normalized.includes("disney") && !/\b(?:sem|nao(?: quero)?)\s+(?:o\s+)?disney/.test(normalized)) {
     return plans.find(plan => normalizeText(plan.name).includes("disney")) ?? null;
+  }
+  if (/\b(2|dois|duas)\s*chips?\b/.test(normalized)) {
+    const twinSim = plans.find(plan => /\b2\s*chips?\b/.test(normalizeText(`${plan.name} ${plan.description ?? ""}`)));
+    if (twinSim) return twinSim;
   }
   const fullName = [...plans].sort((a, b) => b.name.length - a.name.length)
     .find(plan => normalized.includes(normalizeText(plan.name)));
@@ -2100,4 +2164,9 @@ function isEmailAnswer(value: string) {
   if (/nao (sei|tenho|lembro|consigo)|esqueci|sem e-?mail/.test(normalized)) return true;
   if (/voltei|continuar|onde paramos|retomar|irritad|chatead|que saco|muita pergunta|perguntas demais|reclam|demorad/.test(normalized)) return false;
   return !looksLikeQuestion(text) || /^\?+$/.test(text) || /e-?mail|gmail|hotmail|outlook|arroba/.test(normalized);
+}
+
+function clearRegionalPlan(memory: ChatMemory) {
+  memory.planId = undefined; memory.planName = undefined; memory.planValue = undefined;
+  memory.pendingUpsellPlanId = undefined; memory.offeredUpsellPlanIds = []; memory.declinedUpsellPlanIds = [];
 }
