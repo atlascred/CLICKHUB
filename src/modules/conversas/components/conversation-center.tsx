@@ -1,6 +1,8 @@
 "use client";
+import { fetchApi, apiErrorMessage, reportApiError } from "@/lib/client-api";
 
 import { useSearchParams } from "next/navigation";
+import { clearSentDraft, mergeRecentMessages } from "@/modules/conversas/conversation-state";
 import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
 
 import { ChatMessageMedia } from "./chat-message-media";
@@ -132,6 +134,11 @@ export function ConversationCenter() {
   const [listError, setListError] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isStartingConversation, setIsStartingConversation] = useState(false);
+  const drafts = useRef(new Map<string, { message: string; file: File | null }>());
+  const draftConversation = useRef<string | null>(null);
+  const currentDraft = useRef({ message, file: selectedFile });
+  currentDraft.current = { message, file: selectedFile };
   const [isSavingTags, setIsSavingTags] = useState(false);
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
@@ -139,7 +146,7 @@ export function ConversationCenter() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [agents, setAgents] = useState<Array<{id:string;instanceName:string}>>([]);
   const [newAgentId, setNewAgentId] = useState("");
-  useEffect(() => { let active=true; fetch("/api/whatsapp/agents").then(r=>r.json()).then(r=>{if(active && r.status === "success") setAgents(r.data);}).catch(()=>{}); return ()=>{active=false;}; }, []);
+  useEffect(() => { let active=true; fetchApi("/api/whatsapp/agents").then(r=>r.json()).then(r=>{if(active && r.status === "success") setAgents(r.data);}).catch(()=>{}); return ()=>{active=false;}; }, []);
   const [createForm, setCreateForm] = useState({ phone: "", leadName: "", firstMessage: "", ownerUserId: "" });
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
@@ -177,7 +184,7 @@ export function ConversationCenter() {
     leadNavigationPending.current = true;
     selectedIdRef.current = null; setSelectedId(null); setDetail(null); setMobileChatOpen(false); setIsLoading(true);
     setListError(null);
-    void fetch(`/api/leads/${encodeURIComponent(requestedLeadId)}/conversation`, { cache: "no-store", signal: controller.signal })
+    void fetchApi(`/api/leads/${encodeURIComponent(requestedLeadId)}/conversation`, { cache: "no-store", signal: controller.signal })
       .then(async response => { const result = await response.json(); if (!response.ok || result.status !== "success") throw new Error(result.message || "Não foi possível abrir a conversa."); return result.data; })
       .then(data => {
         if (controller.signal.aborted) return;
@@ -208,7 +215,7 @@ export function ConversationCenter() {
     summaryRequestRef.current = controller;
     const timeout = setTimeout(() => controller.abort(), 25000);
     try {
-      const response = await fetch(`/api/inbox?summaryOnly=1&agent=${agentScope}`, { cache: "no-store", signal: controller.signal });
+      const response = await fetchApi(`/api/inbox?summaryOnly=1&agent=${agentScope}`, { cache: "no-store", signal: controller.signal });
       const result = await response.json();
       if (result.status === "success" && !controller.signal.aborted) {
         setSummary(result.data);
@@ -253,7 +260,7 @@ export function ConversationCenter() {
     }
 
     try {
-    const response = await fetch(`/api/inbox?offset=${offset}&limit=${limit}&filter=${filter}&agent=${agentScope}&includeSummary=0`, { cache: "no-store", signal: controller.signal });
+    const response = await fetchApi(`/api/inbox?offset=${offset}&limit=${limit}&filter=${filter}&agent=${agentScope}&includeSummary=0`, { cache: "no-store", signal: controller.signal });
     const result = await response.json();
     if (controller.signal.aborted) return;
     if (!response.ok || result.status !== "success") {
@@ -324,6 +331,14 @@ export function ConversationCenter() {
   }
 
   async function loadDetail(conversationId: string, options?: { appendOlder?: boolean }) {
+    if (!options?.appendOlder && draftConversation.current !== conversationId) {
+      if (draftConversation.current) drafts.current.set(draftConversation.current, currentDraft.current);
+      const draft = drafts.current.get(conversationId) ?? { message: "", file: null };
+      setMessage(draft.message); setSelectedFile(draft.file);
+      setAudioPreviewUrl(draft.file?.type.startsWith("audio/") ? URL.createObjectURL(draft.file) : null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      draftConversation.current = conversationId;
+    }
     if (!options?.appendOlder && detailRequestRef.current && selectedIdRef.current === conversationId) return;
     detailRequestRef.current?.abort();
     const controller = new AbortController();
@@ -344,19 +359,28 @@ export function ConversationCenter() {
     const limit = detail?.messagesPagination?.limit ?? 40;
     const nextOffset = appendOlder ? currentOffset + limit : 0;
     const beforeHeight = messagesScrollRef.current?.scrollHeight ?? 0;
+    const scrollNode = messagesScrollRef.current;
+    const nearBottom = !scrollNode || scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight < 120;
+    const changingConversation = detail?.id !== conversationId;
     try {
-    const response = await fetch(
+    const response = await fetchApi(
       `/api/inbox?conversationId=${conversationId}&messagesOffset=${nextOffset}&messagesLimit=${limit}`,
       { cache: "no-store", signal: controller.signal },
     );
     const result = await response.json();
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted || selectedIdRef.current !== conversationId) return;
     if (result.status !== "success") throw new Error(result.message);
     if (result.status === "success") {
       const normalized = result.data ? normalizeConversationDetail(result.data) : null;
       setDetail((current) => {
         if (!normalized) return null;
         if (!appendOlder || !current || current.id !== normalized.id) {
+          if (!appendOlder && current?.id === normalized.id && current.messagesPagination && normalized.messagesPagination && current.messagesPagination.offset > 0) {
+            const messages = mergeRecentMessages(current.messages, normalized.messages);
+            return { ...normalized, messages, messagesPagination: { ...normalized.messagesPagination,
+              offset: Math.max(0, messages.length - normalized.messagesPagination.limit),
+              hasMore: messages.length < normalized.messagesPagination.total } };
+          }
           return normalized;
         }
 
@@ -376,7 +400,7 @@ export function ConversationCenter() {
           const afterHeight = node.scrollHeight;
           node.scrollTop = afterHeight - beforeHeight + node.scrollTop;
         });
-      } else {
+      } else if (changingConversation || nearBottom) {
         requestAnimationFrame(() => {
           const node = messagesScrollRef.current;
           if (!node) return;
@@ -545,9 +569,10 @@ export function ConversationCenter() {
   }
 
   async function toggleControl() {
+    try {
     if (!detail) return;
     setStatusMessage(null);
-    const response = await fetch("/api/inbox/control", {
+    const response = await fetchApi("/api/inbox/control", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversationId: detail.id }),
@@ -555,11 +580,14 @@ export function ConversationCenter() {
     const result = await response.json();
     setStatusMessage(result.message ?? null);
     await loadConversations({ preferredId: detail.id, reset: true, limitOverride: Math.max(payload?.conversations.items.length ?? PAGE_SIZE, PAGE_SIZE) });
+
+    } catch (error) { reportApiError(error); setStatusMessage(apiErrorMessage(error));  }
   }
 
   async function assignOwner(ownerUserId: string) {
+    try {
     if (!detail) return;
-    const response = await fetch("/api/inbox/assign", {
+    const response = await fetchApi("/api/inbox/assign", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversationId: detail.id, ownerUserId: ownerUserId || null }),
@@ -567,6 +595,8 @@ export function ConversationCenter() {
     const result = await response.json();
     setStatusMessage(result.message ?? null);
     await loadConversations({ preferredId: detail.id, reset: true, limitOverride: Math.max(payload?.conversations.items.length ?? PAGE_SIZE, PAGE_SIZE) });
+
+    } catch (error) { reportApiError(error); setStatusMessage(apiErrorMessage(error));  }
   }
 
   async function saveTags(tags: string[]) {
@@ -574,10 +604,11 @@ export function ConversationCenter() {
   }
 
   async function saveTagObjects(tags: ConversationTag[]) {
+    try {
     if (!detail) return;
     setIsSavingTags(true);
     try {
-      const response = await fetch("/api/inbox/tags", {
+      const response = await fetchApi("/api/inbox/tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conversationId: detail.id, tags }),
@@ -589,24 +620,35 @@ export function ConversationCenter() {
     } finally {
       setIsSavingTags(false);
     }
+
+    } catch (error) { reportApiError(error); setStatusMessage(apiErrorMessage(error));  } finally { setIsSavingTags(false); }
   }
 
   async function sendMessage() {
     if (!detail || isSending || (!message.trim() && !selectedFile)) return;
     if (selectedFile && selectedFile.size > 3 * 1024 * 1024) { setStatusMessage("Use um arquivo de até 3 MB."); return; }
     if (selectedFile && !selectedFile.size) { setStatusMessage("O arquivo está vazio. Grave ou selecione novamente."); return; }
+    const sentConversationId = detail.id;
+    const sentDraft = { message, file: selectedFile };
     setIsSending(true);
     try {
-      const response = selectedFile ? await sendMedia() : await fetch("/api/inbox", {
+      const response = selectedFile ? await sendMedia() : await fetchApi("/api/inbox", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({conversationId: detail.id, content: message.trim()}),
       });
       const result=await response.json();
       if (!response.ok || result.status !== "success") throw new Error(result.message || "Falha no envio.");
       setStatusMessage(selectedFile?.type.startsWith("audio/") && message.trim() ? "Áudio enviado. O texto foi mantido para você enviar separadamente." : result.message);
-      if (!selectedFile?.type.startsWith("audio/")) setMessage("");
-      clearSelectedMedia();
-      await loadConversations({ preferredId: detail.id, reset: true, limitOverride: Math.max(payload?.conversations.items.length ?? PAGE_SIZE, PAGE_SIZE) });
+      const keepText = Boolean(sentDraft.file?.type.startsWith("audio/"));
+      if (draftConversation.current === sentConversationId) {
+        const next = clearSentDraft(currentDraft.current, sentDraft, keepText);
+        setMessage(next.message);
+        if (currentDraft.current.file === sentDraft.file) clearSelectedMedia();
+      } else {
+        const stored = drafts.current.get(sentConversationId) ?? sentDraft;
+        drafts.current.set(sentConversationId, clearSentDraft(stored, sentDraft, keepText));
+      }
+      await loadConversations({ preferredId: selectedIdRef.current, reset: true, silent: true, limitOverride: Math.max(payload?.conversations.items.length ?? PAGE_SIZE, PAGE_SIZE) });
     } catch(error) { setStatusMessage(error instanceof Error ? error.message : "Falha no envio. Sua mensagem foi mantida."); }
     finally { setIsSending(false); }
   }
@@ -617,15 +659,18 @@ export function ConversationCenter() {
     formData.append("caption", message);
     if (selectedFile) formData.append("file", selectedFile);
 
-    return fetch("/api/inbox/media", {
+    return fetchApi("/api/inbox/media", {
       method: "POST",
       body: formData,
     });
   }
 
   async function startConversation() {
+    if (isStartingConversation) return;
+    setIsStartingConversation(true);
+    try {
     if (!newAgentId) { setStatusMessage("Selecione NIO FIBRA ou VIVO FIBRA para iniciar a conversa."); return; }
-    const response = await fetch("/api/inbox/start", {
+    const response = await fetchApi("/api/inbox/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -645,6 +690,8 @@ export function ConversationCenter() {
       setCreateForm({ phone: "", leadName: "", firstMessage: "", ownerUserId: "" });
       await loadConversations({ preferredId: result.data.id, reset: true });
     }
+
+    } catch (error) { reportApiError(error); setStatusMessage(apiErrorMessage(error));  } finally { setIsStartingConversation(false); }
   }
 
   async function startRecording() {
@@ -691,10 +738,11 @@ export function ConversationCenter() {
   }
 
   async function deleteConversation() {
+    try {
     if (!detail) return;
     if (!window.confirm("Tem certeza que deseja excluir esta conversa?")) return;
 
-    const response = await fetch(`/api/inbox/${detail.id}`, {
+    const response = await fetchApi(`/api/inbox/${detail.id}`, {
       method: "DELETE",
     });
     const result = await response.json();
@@ -702,6 +750,8 @@ export function ConversationCenter() {
     setDetail(null);
     setSelectedId(null);
     await loadConversations({ reset: true, preferredId: null });
+
+    } catch (error) { reportApiError(error); setStatusMessage(apiErrorMessage(error));  }
   }
 
   return (
@@ -804,7 +854,7 @@ export function ConversationCenter() {
                 <button
                   key={conversation.id}
                   type="button"
-                  onClick={() => { setMobileChatOpen(true); void loadDetail(conversation.id); }}
+                  onClick={() => { leadNavigationPending.current = false; setMobileChatOpen(true); void loadDetail(conversation.id); }}
                   className={`wa-contact w-full border-b px-4 py-3 text-left transition-colors ${selectedId === conversation.id ? "bg-primary/10" : "hover:bg-muted/60"}`}
                 >
                 <div className="flex items-start justify-between gap-3">
@@ -1072,7 +1122,7 @@ export function ConversationCenter() {
             <Textarea placeholder="Primeira mensagem opcional..." value={createForm.firstMessage} onChange={(event) => setCreateForm((current) => ({ ...current, firstMessage: event.target.value }))} />
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>Cancelar</Button>
-              <Button type="button" onClick={() => void startConversation()}>Iniciar conversa</Button>
+              <Button type="button" disabled={isStartingConversation} onClick={() => void startConversation()}>Iniciar conversa</Button>
             </div>
           </div>
         </Modal>

@@ -1,3 +1,5 @@
+import { buildConversationAccessWhere } from "@/repositories/inbox.repository";
+import { resolveLeadAgentScope } from "@/lib/lead-source-access";
 import { saveEvolutionOutbound } from "@/repositories/evolution-outbound.repository";
 import { withEvolutionInstance, scopedEvolutionId } from "@/services/evolution-context";
 import { resolveSelectedAgent } from "@/services/whatsapp-agent";
@@ -38,11 +40,13 @@ export async function POST(request: Request) {
       return NextResponse.json(errorResponse("Destino e mensagem, audio ou anexo sao obrigatorios.", "VALIDATION_ERROR"), { status: 422 });
     }
 
-    const existing = body.conversationId ? await prisma.chatConversation.findFirst({ where: { id: body.conversationId, deletedAt: null } }) : null;
+    const existing = body.conversationId ? await prisma.chatConversation.findFirst({ where: { id: body.conversationId, ...buildConversationAccessWhere(user) } }) : null;
     if (body.conversationId && !existing) throw new Error("Conversa não encontrada.");
     if (existing && normalizePhone(existing.phone) !== normalizePhone(body.to)) throw new Error("O destino não corresponde à conversa selecionada.");
     if (existing?.agentId && body.agentId && existing.agentId !== body.agentId) throw new Error("A conversa pertence a outro agente.");
     const agent = await resolveSelectedAgent(existing?.agentId || body.agentId);
+    const scope = resolveLeadAgentScope(user);
+    if (scope !== "both" && agent.zapiInstanceId !== (scope === "click" ? "CLICK" : "GIGA CLICK")) throw new Error("FORBIDDEN");
     const destinationInput = body.to;
     const execute = async () => {
     const resolvedPhone = await resolveEvolutionPhone(destinationInput);

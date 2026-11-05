@@ -1,4 +1,5 @@
 "use client";
+import { fetchApi, apiErrorMessage, reportApiError } from "@/lib/client-api";
 
 import { FormEvent, ReactNode, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, Pencil, Plus, ReceiptText, Search, Trash2, WalletCards, X } from "lucide-react";
@@ -28,18 +29,27 @@ export function ExpensePanel() {
   const total = (status: ExpenseStatus) => expenses.filter((item) => item.status === status).reduce((sum, item) => sum + Number(item.amount), 0);
 
   async function save(payload: Record<string, unknown>) {
-    setSaving(true); const response = await fetch(editing ? `/api/expenses/${editing.id}` : "/api/expenses", { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    try {
+    setSaving(true); const response = await fetchApi(editing ? `/api/expenses/${editing.id}` : "/api/expenses", { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const result = (await response.json()) as ApiResult<Expense>; setMessage(result.message); setSaving(false);
     if (response.ok) { setEditing(undefined); await resource.refresh(); window.dispatchEvent(new Event("crm:dashboard-refresh")); }
+
+    } catch (error) { reportApiError(error); setMessage(apiErrorMessage(error));  } finally { setSaving(false); }
   }
   async function changeStatus(expense: Expense, status: ExpenseStatus) {
-    const response = await fetch(`/api/expenses/${expense.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    try {
+    const response = await fetchApi(`/api/expenses/${expense.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
     if (response.ok) { await resource.refresh(); window.dispatchEvent(new Event("crm:dashboard-refresh")); }
+
+    } catch (error) { reportApiError(error); setMessage(apiErrorMessage(error));  }
   }
   async function remove(expense: Expense) {
+    try {
     if (!window.confirm(`Excluir a despesa ${expense.description}?`)) return;
-    const response = await fetch(`/api/expenses/${expense.id}`, { method: "DELETE" });
+    const response = await fetchApi(`/api/expenses/${expense.id}`, { method: "DELETE" });
     if (response.ok) { await resource.refresh(); window.dispatchEvent(new Event("crm:dashboard-refresh")); }
+
+    } catch (error) { reportApiError(error); setMessage(apiErrorMessage(error));  }
   }
 
   return <div className="space-y-5">

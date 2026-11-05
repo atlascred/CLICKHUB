@@ -1,3 +1,4 @@
+import { resolveLeadAgentScope } from "@/lib/lead-source-access";
 import { NextResponse } from "next/server";
 import { authErrorResponse } from "@/lib/api-errors";
 import { errorResponse, successResponse } from "@/lib/api-response";
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
     assertPermission(user, permissions.conversationsView);
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id")?.trim();
-    const conversations = id ? await conversationService.get(id) : await conversationService.list(searchParams.get("agentId")?.trim() || undefined);
+    const conversations = id ? await conversationService.get(id, user) : await conversationService.list(searchParams.get("agentId")?.trim() || undefined, user);
     if (!conversations) {
       return NextResponse.json(errorResponse("Conversa nao encontrada.", "NOT_FOUND"), { status: 404 });
     }
@@ -41,6 +42,8 @@ export async function POST(request: Request) {
     }
 
     const agent = await resolveSelectedAgent(body.agentId);
+    const scope = resolveLeadAgentScope(user);
+    if (scope !== "both" && agent.zapiInstanceId !== (scope === "click" ? "CLICK" : "GIGA CLICK")) throw new Error("FORBIDDEN");
     const conversation = await conversationService.create({
       agentId: agent.id,
       phone,
@@ -74,7 +77,7 @@ export async function PUT(request: Request) {
       return NextResponse.json(errorResponse("ID obrigatorio.", "VALIDATION_ERROR"), { status: 422 });
     }
 
-    const conversation = await conversationService.update(body as { id: string; name?: string; assignedTo?: string; tags?: unknown; state?: string; blocked?: boolean; humanTakeover?: boolean });
+    const conversation = await conversationService.update(body as { id: string; name?: string; assignedTo?: string; tags?: unknown; state?: string; blocked?: boolean; humanTakeover?: boolean }, user);
     return NextResponse.json(successResponse("Conversa atualizada.", conversation));
   } catch (error) {
     const authError = authErrorResponse(error);
@@ -94,7 +97,7 @@ export async function DELETE(request: Request) {
       return NextResponse.json(errorResponse("ID obrigatorio.", "VALIDATION_ERROR"), { status: 422 });
     }
 
-    await conversationService.delete(id);
+    await conversationService.delete(id, user);
     return NextResponse.json(successResponse("Conversa excluida.", { id }));
   } catch (error) {
     const authError = authErrorResponse(error);

@@ -1,3 +1,5 @@
+import { buildConversationAccessWhere } from "@/repositories/inbox.repository";
+import type { LeadAccessUser } from "@/lib/lead-source-access";
 import { saveEvolutionOutbound } from "@/repositories/evolution-outbound.repository";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -83,13 +85,13 @@ export class ChatbotRepository {
     return message;
   }
 
-  async findConversationById(id: string) {
+  async findConversationById(id: string, user?: LeadAccessUser) {
     return this.db.chatConversation.findFirst({
-      where: { id, deletedAt: null },
+      where: { id, ...buildConversationAccessWhere(user) },
       include: {
         lead: true,
-        agent: true,
-        owner: true,
+        agent: { select: { id: true, name: true, zapiInstanceId: true } },
+        owner: { select: { id: true, name: true, role: true } },
         messages: { orderBy: { createdAt: "asc" } },
       },
     });
@@ -406,13 +408,13 @@ export class ChatbotRepository {
     });
   }
 
-  async listConversations(agentId?: string) {
+  async listConversations(agentId?: string, user?: LeadAccessUser) {
     return this.db.chatConversation.findMany({
-      where: { deletedAt: null, ...(agentId ? { agentId } : {}) },
+      where: { ...buildConversationAccessWhere(user), ...(agentId ? { agentId } : {}) },
       include: {
         lead: true,
-        agent: true,
-        owner: true,
+        agent: { select: { id: true, name: true, zapiInstanceId: true } },
+        owner: { select: { id: true, name: true, role: true } },
         messages: {
           orderBy: { createdAt: "asc" },
         },

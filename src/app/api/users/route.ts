@@ -16,7 +16,8 @@ export async function GET() {
     const user = await requireCurrentUser();
     if (!hasPermission(user, permissions.usersEdit)) {
       assertPermission(user, permissions.leadsView);
-      return NextResponse.json(successResponse("Usuarios consultados.", [user]));
+      const { passwordHash: _passwordHash, ...publicUser } = user;
+      return NextResponse.json(successResponse("Usuarios consultados.", [publicUser]));
     }
     const users = await userService.list();
     return NextResponse.json(successResponse("Usuarios consultados.", users));

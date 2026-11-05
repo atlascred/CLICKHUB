@@ -6,14 +6,14 @@
     "dev": "next dev --turbopack",
     "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "seed": "npx tsx scripts/seed.ts",
     "import:ceps": "node scripts/import-ceps.mjs",
-    "test": "node --require ./tests/register.cjs --test tests/*.test.ts",
-    "test:chatbot": "node --require ./tests/register.cjs --test tests/chatbot.test.ts",
+    "test": "node scripts/run-tests.cjs",
+    "test:chatbot": "node scripts/run-tests.cjs chatbot.test.ts",
     "simulate:chatbot": "node scripts/simulate-chatbot.cjs"
   },
   "dependencies": {

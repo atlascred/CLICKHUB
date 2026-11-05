@@ -27,15 +27,22 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
       const cached = sessionStorage.getItem(storageKey);
       if (cached) setCachedUser(JSON.parse(cached) as CurrentUser);
     } catch {
-      sessionStorage.removeItem(storageKey);
+      try { sessionStorage.removeItem(storageKey); } catch { /* Storage may be disabled. */ }
     }
   }, []);
 
   useEffect(() => {
     if (!resource.data) return;
     setCachedUser(resource.data);
-    sessionStorage.setItem(storageKey, JSON.stringify(resource.data));
+    try { sessionStorage.setItem(storageKey, JSON.stringify(resource.data)); } catch { /* Keep the authenticated session usable without browser storage. */ }
   }, [resource.data]);
+
+  const { statusCode, setData } = resource;
+  useEffect(() => {
+    if (statusCode === 401 || statusCode === 403) {
+      setCachedUser(null); setData(null); clearCurrentUserCache();
+    }
+  }, [statusCode, setData]);
 
   return (
     <CurrentUserContext.Provider value={{ ...resource, data: resource.data ?? cachedUser }}>
@@ -45,7 +52,7 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
 }
 
 export function clearCurrentUserCache() {
-  sessionStorage.removeItem(storageKey);
+  try { sessionStorage.removeItem(storageKey); } catch { /* Storage may be disabled. */ }
 }
 
 export function useCurrentUser() {

@@ -1,4 +1,6 @@
 "use client";
+import { businessDate } from "@/lib/business-date";
+import { fetchApi, apiErrorMessage, reportApiError } from "@/lib/client-api";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { CalendarDays, Check, LayoutGrid, List, Pencil, Plus, Search, Trash2, X } from "lucide-react";
@@ -63,6 +65,7 @@ type AppointmentItem = {
 };
 
 export function AppointmentBoard() {
+  const [actionError, setActionError] = useState<string | null>(null);
   const isMobile = useMediaQuery("(max-width: 767px)");
   const { data, loading, error, refresh } = useApiResource<AppointmentItem[]>("/api/appointments");
   const leads = useApiResource<LeadOption[]>("/api/leads");
@@ -93,10 +96,11 @@ export function AppointmentBoard() {
   }, [data, query]);
 
   const overdue = filtered.filter((item) => item.dueAt && new Date(item.dueAt) < new Date() && item.status !== "Concluido").length;
-  const today = new Date().toISOString().slice(0, 10);
-  const todayCount = filtered.filter((item) => item.startsAt?.slice(0, 10) === today || item.dueAt?.slice(0, 10) === today).length;
+  const today = businessDate();
+  const todayCount = filtered.filter((item) => Boolean(item.startsAt && businessDate(item.startsAt) === today) || Boolean(item.dueAt && businessDate(item.dueAt) === today)).length;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    try {
     event.preventDefault();
     setSaving(true);
     const form = event.currentTarget;
@@ -104,7 +108,7 @@ export function AppointmentBoard() {
     const stageId = String(formData.get("stageId") ?? "");
     const selectedStage = appointmentStages.find((stage) => stage.id === stageId);
     const assignMode = String(formData.get("assignMode") ?? "");
-    const response = await fetch("/api/appointments", {
+    const response = await fetchApi("/api/appointments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -126,26 +130,35 @@ export function AppointmentBoard() {
       await refresh();
     }
     setSaving(false);
+
+    } catch (error) { reportApiError(error); setActionError(apiErrorMessage(error));  } finally { setSaving(false); }
   }
 
   async function updateAppointment(id: string, payload: Partial<AppointmentItem>) {
-    await fetch(`/api/appointments/${id}`, {
+    try {
+    await fetchApi(`/api/appointments/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     await refresh();
+
+    } catch (error) { reportApiError(error); setActionError(apiErrorMessage(error));  }
   }
 
   async function deleteAppointment(id: string) {
-    await fetch(`/api/appointments/${id}`, { method: "DELETE" });
+    try {
+    await fetchApi(`/api/appointments/${id}`, { method: "DELETE" });
     await refresh();
+
+    } catch (error) { reportApiError(error); setActionError(apiErrorMessage(error));  }
   }
 
   async function createStage() {
+    try {
     const name = newStageName.trim();
     if (!name) return;
-    const response = await fetch("/api/appointment-stages", {
+    const response = await fetchApi("/api/appointment-stages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
@@ -154,22 +167,30 @@ export function AppointmentBoard() {
       setNewStageName("");
       await stages.refresh();
     }
+
+    } catch (error) { reportApiError(error); setActionError(apiErrorMessage(error));  }
   }
 
   async function updateStage(id: string, name: string) {
+    try {
     const cleanName = name.trim();
     if (!cleanName) return;
-    const response = await fetch(`/api/appointment-stages/${id}`, {
+    const response = await fetchApi(`/api/appointment-stages/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: cleanName }),
     });
     if (response.ok) await stages.refresh();
+
+    } catch(error) { reportApiError(error); setActionError(apiErrorMessage(error)); }
   }
 
   async function deleteStage(id: string) {
-    const response = await fetch(`/api/appointment-stages/${id}`, { method: "DELETE" });
+    try {
+    const response = await fetchApi(`/api/appointment-stages/${id}`, { method: "DELETE" });
     if (response.ok) await Promise.all([stages.refresh(), refresh()]);
+
+    } catch(error) { reportApiError(error); setActionError(apiErrorMessage(error)); }
   }
 
   return (
@@ -217,6 +238,7 @@ export function AppointmentBoard() {
           <Metric label="Atrasados" value={overdue.toString()} />
         </div>
 
+        {actionError ? <p role="alert" className="text-sm text-destructive">{actionError}</p> : null}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
         {viewMode === "kanban" ? (

@@ -1,4 +1,5 @@
 "use client";
+import { fetchApi, reportApiError } from "@/lib/client-api";
 
 import { useEffect, useRef, useState } from "react";
 import * as Menu from "@radix-ui/react-dropdown-menu";
@@ -33,27 +34,33 @@ export function Header({ title }: HeaderProps) {
     if (appliedPreference.current === preference) return;
     appliedPreference.current = preference;
     setTheme(user.theme === "dark" ? "dark" : "light");
-  }, [setTheme, user?.id, user?.theme]);
+  }, [setTheme, user]);
 
   async function toggleTheme() {
+    try {
     const nextTheme = isDark ? "light" : "dark";
     setTheme(nextTheme);
     document.documentElement.classList.toggle("dark", nextTheme === "dark");
     document.documentElement.style.colorScheme = nextTheme;
     if (user?.id === "visual-preview") return;
-    await fetch("/api/profile", {
+    await fetchApi("/api/profile", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ theme: nextTheme }),
     });
     await currentUser.refresh();
+
+    } catch(error) { reportApiError(error); }
   }
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    try {
+    await fetchApi("/api/auth/logout", { method: "POST" });
     clearCurrentUserCache();
     router.replace("/login");
     router.refresh();
+
+    } catch(error) { reportApiError(error); }
   }
 
   return (

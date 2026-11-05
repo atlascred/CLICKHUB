@@ -1,4 +1,5 @@
 "use client";
+import { fetchApi, apiErrorMessage, reportApiError } from "@/lib/client-api";
 
 import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
 
@@ -61,20 +62,25 @@ export function AgentCenter() {
     `${item.name} ${item.description ?? ""}`.toLowerCase().includes(query.toLowerCase())), [plans.data, query, selectedAgentId]);
 
   async function request(url: string, method: string, body?: unknown) {
+    try {
     setSaving(true); setNotice("");
-    const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    const response = await fetchApi(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
     const result = await response.json();
     setSaving(false); setNotice(result.message ?? (response.ok ? "Alterações salvas." : "Não foi possível salvar."));
     if (!response.ok) throw new Error(result.message);
     return result;
+
+    } catch (error) { reportApiError(error); setNotice(apiErrorMessage(error)); return null; } finally { setSaving(false); }
   }
 
   async function saveAgent(payload: Record<string, unknown>) {
-    await request(editingAgent ? `/api/agents/${editingAgent.id}` : "/api/agents", editingAgent ? "PUT" : "POST", payload);
+    const result = await request(editingAgent ? `/api/agents/${editingAgent.id}` : "/api/agents", editingAgent ? "PUT" : "POST", payload);
+    if (!result) return;
     await agents.refresh(); setModal(null); setEditingAgent(null);
   }
   async function savePlan(payload: Record<string, unknown>) {
-    await request(editingPlan ? `/api/plans/${editingPlan.id}` : "/api/plans", editingPlan ? "PUT" : "POST", { ...payload, agentId: selectedAgentId });
+    const result = await request(editingPlan ? `/api/plans/${editingPlan.id}` : "/api/plans", editingPlan ? "PUT" : "POST", { ...payload, agentId: selectedAgentId });
+    if (!result) return;
     await plans.refresh(); setModal(null); setEditingPlan(null);
   }
   async function remove(kind: "agents" | "plans", id: string) {
@@ -129,7 +135,7 @@ export function AgentCenter() {
 
     {modal === "agent" && <AgentModal agent={editingAgent} plans={(plans.data ?? []).filter(p => !p.agents?.length || p.agents.some(a => a.id === editingAgent?.id))} saving={saving} onClose={() => setModal(null)} onSave={saveAgent} />}
     {modal === "plan" && <PlanModal plan={editingPlan} saving={saving} onClose={() => setModal(null)} onSave={savePlan} />}
-    {modal === "openai" && <OpenAiCredentials saving={saving} onClose={() => setModal(null)} onSave={async (payload) => { await request("/api/settings", "PUT", payload); setModal(null); }} />}
+    {modal === "openai" && <OpenAiCredentials saving={saving} onClose={() => setModal(null)} onSave={async (payload) => { if (await request("/api/settings", "PUT", payload)) setModal(null); }} />}
   </div>;
 }
 

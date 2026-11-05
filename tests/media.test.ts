@@ -76,3 +76,9 @@ test('callbacks reais Evolution 2.3.7 usam keyId e aceitam nome de evento normal
  const payload={event:'MESSAGES_UPDATE',data:{keyId:'provider-audio-id',messageId:'evolution-database-id',status:'READ',fromMe:true}};
  assert.equal(isEvolutionStatusWebhook(payload),true);assert.deepEqual(extractEvolutionStatusUpdates(payload),[{messageId:'provider-audio-id',status:'lido'}]);
 });
+
+test('confirmação numérica do servidor não aparece como entregue ao destinatário',()=>{
+ for(const [value,status] of [[1,'enviado'],[2,'enviado'],[3,'entregue'],[4,'lido'],[5,'lido'],[0,'falha']] as const){
+  assert.equal(extractEvolutionStatusUpdates({data:{key:{id:'synthetic'},update:{status:value}}})[0].status,status);
+ }
+});

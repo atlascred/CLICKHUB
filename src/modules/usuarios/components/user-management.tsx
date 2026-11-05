@@ -1,4 +1,5 @@
 "use client";
+import { fetchApi, apiErrorMessage, reportApiError } from "@/lib/client-api";
 
 import { FormEvent, ReactNode, useMemo, useState } from "react";
 import {
@@ -105,9 +106,10 @@ export function UserManagement() {
   const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   async function request(id: string | null, payload?: Record<string, unknown>, method = "PUT") {
+    try {
     setSaving(true);
     setNotice("");
-    const response = await fetch(id ? `/api/users/${id}` : "/api/users", {
+    const response = await fetchApi(id ? `/api/users/${id}` : "/api/users", {
       method,
       headers: { "Content-Type": "application/json" },
       body: payload ? JSON.stringify(payload) : undefined,
@@ -118,6 +120,8 @@ export function UserManagement() {
     if (!response.ok) return false;
     await usersResource.refresh();
     return true;
+
+    } catch (error) { reportApiError(error); setNotice(apiErrorMessage(error)); return false; } finally { setSaving(false); }
   }
 
   async function save(payload: Record<string, unknown>) {

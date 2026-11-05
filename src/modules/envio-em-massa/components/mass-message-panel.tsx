@@ -1,4 +1,6 @@
 "use client";
+import { fetchApi } from "@/lib/client-api";
+import { sessionValue, storeSessionValue, removeSessionValue } from "@/lib/browser-storage";
 import { useEffect, useRef, useState } from "react";
 import { BadgeCheck, Loader2, RefreshCw, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,7 +12,7 @@ import type { Campaign, RecipientStatus } from "../services/mass-message.service
 type Connection = { configured: boolean; missing: string[]; displayNumber: string; webhookPath: string; templates: OfficialTemplate[] };
 const labels: Record<RecipientStatus, string> = { queued: "Pendente", sending: "Processando", accepted: "Aceita pela Meta", delivered: "Entregue", read: "Lida", failed: "Falhou", uncertain: "Conferir na Meta" };
 async function api(path: string, body?: unknown) {
-  const response = await fetch(path, { ...(body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}), cache: "no-store" });
+  const response = await fetchApi(path, { ...(body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}), cache: "no-store" });
   const payload = await response.json();
   if (!response.ok || payload.status !== "success") throw new Error(payload.message || "Não foi possível consultar a campanha.");
   return payload.data;
@@ -42,14 +44,14 @@ export function MassMessagePanel() {
   useEffect(() => {
     mounted.current = true;
     void refresh();
-    const saved = window.sessionStorage.getItem("clickhub:official-meta-campaign");
+    const saved = sessionValue("clickhub:official-meta-campaign");
     if (saved) {
       requestId.current = saved;
       void api(`/api/envio-em-massa?id=${encodeURIComponent(saved)}`).then(data => { if (mounted.current) setCampaign(data); }).catch(() => {});
     }
     return () => { mounted.current = false; stop.current = true; };
   }, []);
-  function resetRequest() { requestId.current = null; setCampaign(null); window.sessionStorage.removeItem("clickhub:official-meta-campaign"); }
+  function resetRequest() { requestId.current = null; setCampaign(null); removeSessionValue("clickhub:official-meta-campaign"); }
   async function process(current: Campaign) {
     let next = current;
     while (mounted.current && !stop.current && next.recipients.some(r => ["queued", "sending"].includes(r.status))) {
@@ -67,7 +69,7 @@ export function MassMessagePanel() {
       let current = campaign;
       if (!current) {
         requestId.current ||= crypto.randomUUID();
-        window.sessionStorage.setItem("clickhub:official-meta-campaign", requestId.current);
+        storeSessionValue("clickhub:official-meta-campaign", requestId.current);
         current = await api("/api/envio-em-massa", { action: "create", id: requestId.current, contacts, templateId, values, mediaUrl, consent }) as Campaign;
         setCampaign(current);
       }

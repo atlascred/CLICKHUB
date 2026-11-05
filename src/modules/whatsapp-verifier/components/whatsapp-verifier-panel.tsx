@@ -1,4 +1,5 @@
 "use client";
+import { fetchApi, apiErrorMessage, reportApiError } from "@/lib/client-api";
 
 import { FormEvent, useMemo, useState } from "react";
 import { CheckCircle2, Clipboard, Download, Loader2, Smartphone, Upload } from "lucide-react";
@@ -36,12 +37,13 @@ export function WhatsAppVerifierPanel() {
   const estimatedCount = useMemo(() => phones.split(/[\n,;]+/).map((item) => item.trim()).filter(Boolean).length, [phones]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    try {
     event.preventDefault();
     if (loading) return;
     setError("");
     setCopied(false);
     setLoading(true);
-    const response = await fetch("/api/whatsapp/verify", {
+    const response = await fetchApi("/api/whatsapp/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ phones }),
@@ -53,13 +55,18 @@ export function WhatsAppVerifierPanel() {
       return;
     }
     setResult(payload.data);
+
+    } catch (error) { reportApiError(error); setError(apiErrorMessage(error));  } finally { setLoading(false); }
   }
 
   async function copyResult() {
+    try {
     if (!result?.formatted) return;
     await navigator.clipboard.writeText(result.formatted);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
+
+    } catch (error) { reportApiError(error); setError(apiErrorMessage(error));  }
   }
 
   async function handleFileChange(file?: File | null) {

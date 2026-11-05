@@ -1,4 +1,5 @@
 "use client";
+import { fetchApi, apiErrorMessage, reportApiError } from "@/lib/client-api";
 
 import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
 
@@ -47,10 +48,11 @@ export function CepPanel() {
   const [loading, setLoading] = useState(false);
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
+    try {
     event.preventDefault();
     setLoading(true);
     const formData = new FormData(event.currentTarget);
-    const response = await fetch(`/api/ceps?cep=${formData.get("cep")}${agentId ? `&agentId=${agentId}` : ""}`);
+    const response = await fetchApi(`/api/ceps?cep=${formData.get("cep")}${agentId ? `&agentId=${agentId}` : ""}`);
     const data = (await response.json()) as ApiResult<CepItem>;
     if (data.status === "success") {
       setResult(data.data);
@@ -65,14 +67,17 @@ export function CepPanel() {
       setMessage(data.message);
     }
     setLoading(false);
+
+    } catch (error) { reportApiError(error); setMessage(apiErrorMessage(error));  } finally { setLoading(false); }
   }
 
   async function handleManualCreate(event: FormEvent<HTMLFormElement>) {
+    try {
     event.preventDefault();
     setLoading(true);
     const form = event.currentTarget;
     const formData = new FormData(form);
-    const response = await fetch("/api/ceps", {
+    const response = await fetchApi("/api/ceps", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -91,14 +96,17 @@ export function CepPanel() {
       await overview.refresh();
     }
     setLoading(false);
+
+    } catch (error) { reportApiError(error); setMessage(apiErrorMessage(error));  } finally { setLoading(false); }
   }
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
+    try {
     event.preventDefault();
     setLoading(true);
     const form = event.currentTarget;
     const formData = new FormData(form);
-    const response = await fetch("/api/ceps/import", { method: "POST", body: formData });
+    const response = await fetchApi("/api/ceps/import", { method: "POST", body: formData });
     const data = (await response.json()) as ApiResult<{ totalRows: number; imported: number }>;
     setMessage(
       data.status === "success"
@@ -110,6 +118,8 @@ export function CepPanel() {
       await overview.refresh();
     }
     setLoading(false);
+
+    } catch (error) { reportApiError(error); setMessage(apiErrorMessage(error));  } finally { setLoading(false); }
   }
 
   return (

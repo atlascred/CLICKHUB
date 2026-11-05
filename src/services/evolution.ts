@@ -590,9 +590,9 @@ function resolveWebhookMessageObject(data: Record<string, unknown>) {
 
 function mapEvolutionMessageStatus(value: unknown): "enviado" | "entregue" | "lido" | "falha" {
   const normalized = String(value ?? "").trim().toUpperCase();
-  if (["READ", "READ_BY_ME", "PLAYED", "4"].includes(normalized)) return "lido";
-  if (["DELIVERY_ACK", "DELIVERED", "3", "2"].includes(normalized)) return "entregue";
-  if (["SERVER_ACK", "SENT", "1"].includes(normalized)) return "enviado";
+  if (["READ", "READ_BY_ME", "PLAYED", "4", "5"].includes(normalized)) return "lido";
+  if (["DELIVERY_ACK", "DELIVERED", "3"].includes(normalized)) return "entregue";
+  if (["SERVER_ACK", "SENT", "1", "2"].includes(normalized)) return "enviado";
   return "falha";
 }
 

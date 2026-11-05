@@ -1,4 +1,5 @@
 "use client";
+import { fetchApi, apiErrorMessage, reportApiError } from "@/lib/client-api";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, KeyRound, Moon, Save, ShieldCheck, Sun, UserRound } from "lucide-react";
@@ -29,6 +30,7 @@ export function SettingsPanel() {
   }, [setTheme, user.data?.theme]);
 
   async function changeTheme(nextTheme: "light" | "dark") {
+    try {
     if (!user.data) return;
     themeChangedByUser.current = true;
     setSelectedTheme(nextTheme);
@@ -37,7 +39,7 @@ export function SettingsPanel() {
     document.documentElement.style.colorScheme = nextTheme;
     localStorage.setItem("theme", nextTheme);
     setProfileMessage("Salvando preferência de tema...");
-    const response = await fetch("/api/profile", {
+    const response = await fetchApi("/api/profile", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
@@ -49,24 +51,32 @@ export function SettingsPanel() {
     const result = (await response.json()) as ApiResult<unknown>;
     setProfileMessage(result.message);
     if (response.ok) await user.refresh();
+
+    } catch (error) { reportApiError(error); setProfileMessage(apiErrorMessage(error));  }
   }
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
+    try {
     event.preventDefault(); setSaving(true); setProfileMessage("");
     const data = new FormData(event.currentTarget);
-    const response = await fetch("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: data.get("name"), email: data.get("email"), theme: selectedTheme }) });
+    const response = await fetchApi("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: data.get("name"), email: data.get("email"), theme: selectedTheme }) });
     const result = (await response.json()) as ApiResult<unknown>;
     setProfileMessage(result.message); setSaving(false);
     if (response.ok) await user.refresh();
+
+    } catch (error) { reportApiError(error); setProfileMessage(apiErrorMessage(error));  } finally { setSaving(false); }
   }
 
   async function changePassword(event: FormEvent<HTMLFormElement>) {
+    try {
     event.preventDefault(); setSaving(true); setPasswordMessage("");
     const form = event.currentTarget; const data = new FormData(form);
     if (data.get("newPassword") !== data.get("confirmPassword")) { setPasswordMessage("A confirmação da nova senha não confere."); setSaving(false); return; }
-    const response = await fetch("/api/profile/password", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: data.get("currentPassword"), newPassword: data.get("newPassword") }) });
+    const response = await fetchApi("/api/profile/password", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: data.get("currentPassword"), newPassword: data.get("newPassword") }) });
     const result = (await response.json()) as ApiResult<unknown>;
     setPasswordMessage(result.message); setSaving(false); if (response.ok) form.reset();
+
+    } catch (error) { reportApiError(error); setPasswordMessage(apiErrorMessage(error));  } finally { setSaving(false); }
   }
 
   return <div className={`grid gap-4 ${isAdmin ? "xl:grid-cols-[1.1fr_0.9fr]" : "max-w-xl"}`}>

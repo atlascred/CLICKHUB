@@ -1,59 +1,40 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 import type { ApiResult } from "@/types/api";
+import { ApiRequestError, apiErrorMessage, fetchApi } from "@/lib/client-api";
 
-const inFlightRequests = new Map<string, Promise<{ response: Response; body: string }>>();
-
+const inFlightRequests = new Map<string, Promise<string>>();
 function requestOnce(url: string) {
   const existing = inFlightRequests.get(url);
   if (existing) return existing;
-  const request = fetch(url, { cache: "no-store" })
-    .then(async (response) => ({ response, body: await response.text() }))
-    .finally(() => window.setTimeout(() => inFlightRequests.delete(url), 250));
+  const request = fetchApi(url, { cache: "no-store" }).then(response => response.text())
+    .finally(() => setTimeout(() => { if (inFlightRequests.get(url) === request) inFlightRequests.delete(url); }, 250));
   inFlightRequests.set(url, request);
   return request;
 }
-
 export function useApiResource<T>(url: string) {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
+  const [resource, setResource] = useState<{ url: string; data: T | null; loading: boolean; error: string | null; statusCode: number | null }>({ url, data: null, loading: true, error: null, statusCode: null });
+  const latest = useRef(0);
+  const currentUrl = useRef(url);
+  currentUrl.current = url;
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    const id = ++latest.current;
+    const isCurrent = () => currentUrl.current === url && latest.current === id;
+    setResource(previous => ({ url, data: previous.url === url ? previous.data : null, loading: true, error: null, statusCode: null }));
     try {
-      const { response, body } = await requestOnce(url);
-
-      if (!body.trim()) {
-        setError(response.ok ? "O servidor retornou uma resposta vazia." : `Falha na consulta (${response.status}).`);
-        return;
-      }
-
-      let result: ApiResult<T>;
-      try {
-        result = JSON.parse(body) as ApiResult<T>;
-      } catch {
-        setError(`O servidor retornou uma resposta inválida (${response.status}).`);
-        return;
-      }
-
-      if (response.ok && result.status === "success") {
-        setData(result.data);
-      } else {
-        setError(result.message || `Falha na consulta (${response.status}).`);
-      }
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Não foi possível consultar o servidor.");
-    } finally {
-      setLoading(false);
+      const result = JSON.parse(await requestOnce(url)) as ApiResult<T>;
+      if (!isCurrent()) return;
+      if (result.status !== "success") throw new ApiRequestError(result.message || "Resposta inválida.");
+      setResource({ url, data: result.data, loading: false, error: null, statusCode: null });
+    } catch (error) {
+      if (isCurrent()) setResource(previous => ({ ...previous, loading: false, error: apiErrorMessage(error), statusCode: error instanceof ApiRequestError ? error.status : null }));
     }
   }, [url]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  return { data, loading, error, refresh, setData };
+  useEffect(() => { void refresh(); return () => { latest.current++; }; }, [refresh]);
+  const setData = useCallback((next: SetStateAction<T | null>) => {
+    setResource(previous => ({ ...previous, data: typeof next === "function" ? (next as (value: T | null) => T | null)(previous.data) : next }));
+  }, []);
+  const matches = resource.url === url;
+  return { data: matches ? resource.data : null, loading: !matches || resource.loading, error: matches ? resource.error : null, statusCode: matches ? resource.statusCode : null, refresh, setData };
 }

@@ -1,4 +1,6 @@
 "use client";
+import { businessDate } from "@/lib/business-date";
+import { fetchApi, apiErrorMessage, reportApiError } from "@/lib/client-api";
 import { leadOperatorLabels, leadOriginText } from "@/modules/leads/types/lead-source";
 import { buildLeadCopyText, type LeadCopyKind } from "@/modules/leads/clipboard";
 
@@ -161,11 +163,11 @@ export function LeadBoard() {
   const filtered = useMemo(() => {
     const term = query.toLowerCase();
     const createdFilter = searchParams.get("created");
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessDate();
 
     return (data ?? []).filter((lead) =>
       (!statusFilter || lead.status === statusFilter || lead.kanbanStageId === statusFilter) &&
-      (!createdFilter || createdFilter !== "today" || lead.createdAt?.slice(0, 10) === today) &&
+      (!createdFilter || createdFilter !== "today" || Boolean(lead.createdAt && businessDate(lead.createdAt) === today)) &&
       [
         lead.name,
         leadOriginText(lead),
@@ -207,11 +209,12 @@ export function LeadBoard() {
   }, [page, totalPages]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    try {
     event.preventDefault();
     setSaving(true);
     const form = event.currentTarget;
     const formData = new FormData(form);
-    const response = await fetch("/api/leads", {
+    const response = await fetchApi("/api/leads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -244,6 +247,8 @@ export function LeadBoard() {
       await refresh();
     }
     setSaving(false);
+
+    } catch (error) { reportApiError(error); setUpdateError(apiErrorMessage(error));  } finally { setSaving(false); }
   }
 
   async function updateLead(id: string, payload: Partial<LeadListItem>) {
@@ -252,7 +257,7 @@ export function LeadBoard() {
     const update = previous.then(async () => {
       setUpdateError(null);
       try {
-        const response = await fetch(`/api/leads/${id}`, {
+        const response = await fetchApi(`/api/leads/${id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -279,9 +284,10 @@ export function LeadBoard() {
   }
 
   async function createStage() {
+    try {
     const name = newStageName.trim();
     if (!name) return;
-    const response = await fetch("/api/lead-stages", {
+    const response = await fetchApi("/api/lead-stages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
@@ -290,12 +296,15 @@ export function LeadBoard() {
       setNewStageName("");
       await stages.refresh();
     }
+
+    } catch (error) { reportApiError(error); setUpdateError(apiErrorMessage(error));  }
   }
 
   async function updateStage(id: string, name: string) {
+    try {
     const cleanName = name.trim();
     if (!cleanName) return;
-    const response = await fetch(`/api/lead-stages/${id}`, {
+    const response = await fetchApi(`/api/lead-stages/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: cleanName }),
@@ -303,6 +312,8 @@ export function LeadBoard() {
     if (response.ok) {
       await stages.refresh();
     }
+
+    } catch(error) { reportApiError(error); setUpdateError(apiErrorMessage(error)); }
   }
 
   function revealStage(id: string) {
@@ -328,7 +339,7 @@ export function LeadBoard() {
     setUpdateError(null);
     stages.setData(next);
     try {
-      const response = await fetch("/api/lead-stages/order", {
+      const response = await fetchApi("/api/lead-stages/order", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: next.map(stage => stage.id) }),
@@ -348,10 +359,13 @@ export function LeadBoard() {
   }
 
   async function deleteStage(id: string) {
-    const response = await fetch(`/api/lead-stages/${id}`, { method: "DELETE" });
+    try {
+    const response = await fetchApi(`/api/lead-stages/${id}`, { method: "DELETE" });
     if (response.ok) {
       await Promise.all([stages.refresh(), refresh()]);
     }
+
+    } catch(error) { reportApiError(error); setUpdateError(apiErrorMessage(error)); }
   }
 
   async function saveLeadDetails(id: string, payload: Partial<LeadListItem>) {
@@ -360,21 +374,27 @@ export function LeadBoard() {
   }
 
   async function deleteLead(id: string) {
-    await fetch(`/api/leads/${id}`, { method: "DELETE" });
+    try {
+    await fetchApi(`/api/leads/${id}`, { method: "DELETE" });
     if (detail?.id === id) {
       setDetail(null);
     }
     await refresh();
+
+    } catch(error) { reportApiError(error); setUpdateError(apiErrorMessage(error)); }
   }
 
   async function openLeadDetails(id: string) {
+    try {
     setDetailLoading(true);
-    const response = await fetch(`/api/leads/${id}`);
+    const response = await fetchApi(`/api/leads/${id}`);
     const result = (await response.json()) as ApiResult<LeadDetail>;
     if (result.status === "success") {
       setDetail(result.data);
     }
     setDetailLoading(false);
+
+    } catch(error) { reportApiError(error); setUpdateError(apiErrorMessage(error)); } finally { setDetailLoading(false); }
   }
 
   return (
@@ -1070,10 +1090,13 @@ function LeadEditForm({
   const [saving, setSaving] = useState(false);
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
+    try {
     event.preventDefault();
     setSaving(true);
     await onSave(lead.id, readLeadForm(new FormData(event.currentTarget)));
     setSaving(false);
+
+    } catch (error) { reportApiError(error);  } finally { setSaving(false); }
   }
 
   return (

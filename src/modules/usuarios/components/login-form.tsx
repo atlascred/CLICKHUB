@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchApi } from "@/lib/client-api";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 import { FormEvent, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Eye, EyeOff, LoaderCircle, Lock, Mail } from "lucide-react";
@@ -27,7 +29,7 @@ export function LoginForm() {
     const formData = new FormData(event.currentTarget);
 
     try {
-      const response = await fetch("/api/auth/login", {
+      const response = await fetchApi("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -38,7 +40,7 @@ export function LoginForm() {
     const result = (await response.json()) as ApiResult<LoginResult>;
 
     if (result.status === "success") {
-      router.replace(searchParams.get("redirect") ?? getStartPath(result.data));
+      router.replace(safeRedirectPath(searchParams.get("redirect"), getStartPath(result.data)));
       router.refresh();
       return;
     }

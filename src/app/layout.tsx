@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Manrope } from "next/font/google";
 import { ThemeProvider } from "@/providers/theme-provider";
+import { Toaster } from "sonner";
 import { PwaProvider } from "@/components/pwa/pwa-provider";
 import "./globals.css";
 
@@ -38,6 +39,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
           {children}
           <PwaProvider />
+          <Toaster richColors position="top-center" />
         </ThemeProvider>
       </body>
     </html>

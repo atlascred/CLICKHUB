@@ -25,7 +25,11 @@ export class FollowUpRepository {
   }
   async claim(key: string, conversationId: string, state: string, now: Date) {
     try { await this.db.appSetting.create({ data: { key, value: { status: "claimed", conversationId, state, claimedAt: now.toISOString() } } }); return true; }
-    catch (error) { if ((error as { code?: string }).code === "P2002") return false; throw error; }
+    catch (error) { if ((error as { code?: string }).code !== "P2002") throw error;
+      // A cancelled pre-send check is safe to claim again; sending/uncertain attempts are not.
+      const retry = await this.db.appSetting.updateMany({ where: { key, value: { path: ["status"], equals: "cancelled" } },
+        data: { value: { status: "claimed", conversationId, state, claimedAt: now.toISOString() } } });
+      return retry.count === 1; }
   }
   async mark(key: string, status: string, extra: Record<string, unknown> = {}) {
     await this.db.$executeRaw`UPDATE "AppSetting" SET "value" = "value" || ${JSON.stringify({ status, ...extra })}::jsonb, "updatedAt" = CURRENT_TIMESTAMP WHERE "key" = ${key}`;
