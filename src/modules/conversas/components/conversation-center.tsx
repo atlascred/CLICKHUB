@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { whatsappAgentLabel } from "@/lib/whatsapp-agent-label";
 
 import { ChatMessageMedia } from "./chat-message-media";
@@ -109,7 +110,12 @@ const TAG_COLORS = [
   { value: "slate", label: "Cinza" },
 ];
 
+type LeadConversationOption = { id: string; agentId: string | null; instanceName: string };
+
 export function ConversationCenter() {
+  const requestedLeadId = useSearchParams().get("lead");
+  const leadNavigationPending = useRef(Boolean(requestedLeadId));
+  const [leadConversations, setLeadConversations] = useState<LeadConversationOption[]>([]);
   const { data: currentUser } = useCurrentUser();
   const [payload, setPayload] = useState<ConversationPayload | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -155,6 +161,38 @@ export function ConversationCenter() {
   const summaryUpdatedAt = useRef(0);
   const summaryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestLoadRef = useRef(loadConversations);
+
+  function openLeadConversation(option: LeadConversationOption) {
+    leadNavigationPending.current = false;
+    setLeadConversations([]);
+    selectedIdRef.current = option.id;
+    setSelectedId(option.id);
+    setMobileChatOpen(true);
+    void latestLoadRef.current({ reset: true, preferredId: option.id });
+  }
+
+  useEffect(() => {
+    if (!requestedLeadId) { leadNavigationPending.current = false; return; }
+    const controller = new AbortController();
+    leadNavigationPending.current = true;
+    selectedIdRef.current = null; setSelectedId(null); setDetail(null); setMobileChatOpen(false); setIsLoading(true);
+    setListError(null);
+    void fetch(`/api/leads/${encodeURIComponent(requestedLeadId)}/conversation`, { cache: "no-store", signal: controller.signal })
+      .then(async response => { const result = await response.json(); if (!response.ok || result.status !== "success") throw new Error(result.message || "Não foi possível abrir a conversa."); return result.data; })
+      .then(data => {
+        if (controller.signal.aborted) return;
+        if (data.conversations.length === 1) openLeadConversation(data.conversations[0]);
+        else if (data.conversations.length > 1) { setLeadConversations(data.conversations); setIsLoading(false); }
+        else {
+          leadNavigationPending.current = false;
+          setCreateForm({ phone: data.lead.phone, leadName: data.lead.name, firstMessage: "", ownerUserId: "" });
+          setNewAgentId(""); setIsCreateOpen(true); setIsLoading(false);
+          void latestLoadRef.current({ reset: true, preferredId: null });
+        }
+      }).catch(error => { if (!controller.signal.aborted) { leadNavigationPending.current = false; setIsLoading(false); setListError(error.message || "Não foi possível abrir a conversa."); } });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedLeadId]);
 
   async function loadSummary() {
     if (summaryRequestRef.current) return;
@@ -378,7 +416,7 @@ export function ConversationCenter() {
 
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     source.addEventListener("conversation-update", () => {
-      if (refreshTimer) return;
+      if (leadNavigationPending.current || refreshTimer) return;
       const refresh = () => {
         if (listRequestRef.current) {
           refreshTimer = setTimeout(refresh, 500);
@@ -399,7 +437,7 @@ export function ConversationCenter() {
       source.close();
     };
     const polling = setInterval(() => {
-      if (connected || document.visibilityState !== "visible" || listRequestRef.current) return;
+      if (leadNavigationPending.current || connected || document.visibilityState !== "visible" || listRequestRef.current) return;
       void latestLoadRef.current({
         preferredId: selectedIdRef.current, reset: true, silent: true,
         limitOverride: visibleCountRef.current,
@@ -414,7 +452,7 @@ export function ConversationCenter() {
   }, []);
 
   useEffect(() => {
-    void loadConversations({ reset: true, preferredId: null });
+    if (!leadNavigationPending.current) void loadConversations({ reset: true, preferredId: null });
     return () => {
       listRequestRef.current?.abort();
       detailRequestRef.current?.abort();
@@ -603,6 +641,7 @@ export function ConversationCenter() {
 
     if (result.status === "success" && result.data?.id) {
       setIsCreateOpen(false);
+      setMobileChatOpen(true);
       setCreateForm({ phone: "", leadName: "", firstMessage: "", ownerUserId: "" });
       await loadConversations({ preferredId: result.data.id, reset: true });
     }
@@ -1012,6 +1051,10 @@ export function ConversationCenter() {
         </Card>
       </div>
 
+      {leadConversations.length > 1 ? <Modal title="Escolha a conversa do lead" onClose={() => { setLeadConversations([]); leadNavigationPending.current = false; void latestLoadRef.current({ reset: true, preferredId: null }); }}>
+        <p className="mb-4 text-sm text-muted-foreground">Este contato tem atendimentos em mais de uma operadora. Escolha qual deseja abrir.</p>
+        <div className="grid gap-3">{leadConversations.map(option => <Button key={option.id} type="button" variant="outline" className="min-h-12 justify-start" onClick={() => openLeadConversation(option)}><MessageCircleMore className="h-4 w-4" />{whatsappAgentLabel(option.instanceName)}</Button>)}</div>
+      </Modal> : null}
       {isCreateOpen ? (
         <Modal title="Novo número manual" onClose={() => setIsCreateOpen(false)}>
           <div className="space-y-4">

@@ -4,7 +4,8 @@ import { buildLeadCopyText, type LeadCopyKind } from "@/modules/leads/clipboard"
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, GripVertical, SlidersHorizontal, CalendarClock, Check, FileSearch, Download, Eye, FileUp, LayoutGrid, List, MessageCircle, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AppDialog } from "@/components/ui/app-dialog";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
@@ -761,11 +762,12 @@ function MobileLeadCard({ lead, stages, onUpdate, onDelete, onOpenDetails }: {
     try { await navigator.clipboard.writeText(buildLeadCopyText(lead, kind)); setFeedback({ text: kind === "consulta" ? "Consulta copiada." : "Dados da venda copiados.", success: true }); }
     catch { setFeedback({ text: "Não foi possível copiar. Confira a permissão da área de transferência.", success: false }); }
   }
-  const whatsapp = buildWhatsAppUrl(lead.phone);
+  const router = useRouter();
+  const conversationHref = `/conversas?lead=${encodeURIComponent(lead.id)}`;
   return <article data-mobile-lead={lead.id} className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
     <div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-sm font-bold text-primary">{lead.name.slice(0, 1).toUpperCase()}</span><button type="button" className="min-w-0 flex-1 py-0.5 text-left" aria-label={`Abrir lead ${lead.name}`} onClick={() => void onOpenDetails(lead.id)}><span className="block truncate text-sm font-bold">{lead.name}</span><span className="mt-1 block text-xs tabular-nums text-muted-foreground">{lead.phone}</span></button><ActionMenu className="-mr-1 -mt-1 border-0 bg-transparent" label={`Ações de ${lead.name}`} items={[
       { label: "Ver detalhes e editar", icon: <Eye className="h-4 w-4" />, onSelect: () => void onOpenDetails(lead.id) },
-      { label: "Conversar no WhatsApp", icon: <MessageCircle className="h-4 w-4 text-emerald-600" />, href: whatsapp || undefined, external: true, disabled: !whatsapp },
+      { label: "Abrir em Conversas", icon: <MessageCircle className="h-4 w-4 text-emerald-600" />, onSelect: () => router.push(conversationHref) },
       { label: "Copiar CONSULTA", icon: <FileSearch className="h-4 w-4 text-amber-600" />, onSelect: () => void copy("consulta") },
       { label: "Copiar SUBIR VENDA", icon: <FileUp className="h-4 w-4 text-emerald-600" />, onSelect: () => void copy("venda") },
       { label: "Excluir lead", icon: <Trash2 className="h-4 w-4" />, destructive: true, onSelect: () => void onDelete(lead.id) },
@@ -858,7 +860,7 @@ function TableView({
                   </td>
                   <td className="px-3 py-3 text-right">
                     <div className="flex justify-end gap-2">
-                      <WhatsAppButton phone={lead.phone} />
+                      <LeadConversationButton leadId={lead.id} />
                       <LeadCopyButtons lead={lead} />
                       <Button
                         aria-label="Ver detalhes do lead"
@@ -978,7 +980,7 @@ function LeadCard({
           <p className="text-muted-foreground">{lead.phone}</p>
         </div>
         <div className="flex shrink-0 gap-1">
-          <WhatsAppButton phone={lead.phone} compact />
+          <LeadConversationButton leadId={lead.id} compact />
           <LeadCopyButtons lead={lead} />
           <Button
             aria-label="Ver detalhes do lead"
@@ -1412,59 +1414,12 @@ function LeadCopyButtons({ lead }: { lead: LeadListItem }) {
   );
 }
 
-function WhatsAppButton({ phone, compact = false }: { phone?: string | null; compact?: boolean }) {
-  const href = buildWhatsAppUrl(phone);
-
-  if (!href) {
-    return (
-      <Button
-        aria-label="WhatsApp indisponivel"
-        size="sm"
-        variant={compact ? "ghost" : "outline"}
-        type="button"
-        disabled
-      >
-        <MessageCircle className="h-4 w-4" aria-hidden="true" />
-      </Button>
-    );
-  }
-
-  return (
-    <Button
-      asChild
-      aria-label="Abrir conversa no WhatsApp"
-      size="sm"
-      variant={compact ? "ghost" : "outline"}
-      type="button"
-    >
-      <a href={href} target="_blank" rel="noreferrer">
-        <MessageCircle className="h-4 w-4" aria-hidden="true" />
-      </a>
-    </Button>
-  );
+function LeadConversationButton({ leadId, compact = false }: { leadId: string; compact?: boolean }) {
+  return <Button asChild aria-label="Abrir contato em Conversas" title="Abrir contato em Conversas" size="sm" variant={compact ? "ghost" : "outline"}>
+    <Link href={`/conversas?lead=${encodeURIComponent(leadId)}`}><MessageCircle className="h-4 w-4" aria-hidden="true" /></Link>
+  </Button>;
 }
 
-function buildWhatsAppUrl(phone?: string | null) {
-  if (!phone) return "";
-  let digits = phone.replace(/\D/g, "");
-  if (!digits) return "";
-
-  // Remove dialing prefixes and trunk zeroes from local formats.
-  digits = digits.replace(/^00/, "");
-  digits = digits.replace(/^0+/, "");
-
-  // Normalize to BR international format.
-  if (digits.startsWith("55")) {
-    if (digits.length < 12 || digits.length > 13) return "";
-  } else if (digits.length === 10 || digits.length === 11) {
-    digits = `55${digits}`;
-  } else {
-    return "";
-  }
-
-  const normalized = digits;
-  return `https://wa.me/${normalized}`;
-}
 
 function formatDateTime(value?: string | null) {
   if (!value) {
