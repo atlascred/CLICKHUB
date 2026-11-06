@@ -1136,7 +1136,7 @@ function LeadFields({
       <div className="grid gap-3 sm:grid-cols-2">
         <Input name="name" placeholder="Nome completo" defaultValue={lead?.name ?? ""} required />
         <Input name="phone" placeholder="WhatsApp" defaultValue={lead?.phone ?? ""} required />
-        <Input name="motherName" placeholder="Nome completo da mãe" aria-label="Nome completo da mãe" defaultValue={lead?.motherName ?? ""} />
+        <label className="grid gap-1 text-xs font-medium text-muted-foreground"><span>Nome completo da mãe</span><Input name="motherName" placeholder="Nome completo da mãe" aria-label="Nome completo da mãe" defaultValue={lead?.motherName ?? ""} /></label>
         <Input name="email" placeholder="E-mail" type="text" defaultValue={lead?.email ?? ""} />
         <Input name="cpfCnpj" placeholder="CPF" defaultValue={lead?.cpfCnpj ?? ""} />
         <label className="grid gap-1 text-xs font-medium text-muted-foreground"><span>Data de nascimento</span><Input name="birthDate" placeholder="Data de nascimento" type="date" defaultValue={formatDateInput(lead?.birthDate)} /></label>
