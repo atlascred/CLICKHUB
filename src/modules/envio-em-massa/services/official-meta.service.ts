@@ -19,16 +19,25 @@ export class OfficialMetaClient {
     if (!/^v\d+\.\d+$/.test(version) || !/^\d+$/.test(phoneId) || !/^\d+$/.test(accountId)) throw new Error("Confira os identificadores e a versão da API da Meta.");
     return { base: `https://graph.facebook.com/${version}`, phoneId, accountId, token: process.env.META_WHATSAPP_ACCESS_TOKEN!.trim() };
   }
-  private async request(path: string, payload?: unknown): Promise<any> {
+  private async request(path: string, payload?: unknown, timeoutMs = 20_000): Promise<any> {
     const config = this.config();
     let response: Response;
     try {
-      response = await this.transport(`${config.base}/${path}`, { method: payload ? "POST" : "GET", headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" }, ...(payload ? { body: JSON.stringify(payload) } : {}), cache: "no-store", redirect: "error", signal: AbortSignal.timeout(20_000) });
+      response = await this.transport(`${config.base}/${path}`, { method: payload ? "POST" : "GET", headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" }, ...(payload ? { body: JSON.stringify(payload) } : {}), cache: "no-store", redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
     } catch { throw new MetaRequestError("Sem confirmação da Meta. Confira o resultado antes de tentar novamente.", Boolean(payload)); }
     let result: any;
     try { result = await response.json(); } catch { throw new MetaRequestError("A Meta retornou uma resposta inválida.", Boolean(payload)); }
     if (!response.ok) throw new MetaRequestError(`A Meta recusou a solicitação${Number.isInteger(result?.error?.code) ? ` (código ${result.error.code})` : ""}. Confira o número, as permissões e o modelo na Meta.`, response.status >= 500 && Boolean(payload));
     return result;
+  }
+  /** Best-effort native typing; overlaps reply preparation with a short timeout. */
+  async typing(messageId: string) {
+    if (!messageId || messageId.startsWith("meta:")) return false;
+    try {
+      const { phoneId } = this.config();
+      await this.request(`${phoneId}/messages`, { messaging_product: "whatsapp", status: "read", message_id: messageId, typing_indicator: { type: "text" } }, 2500);
+      return true;
+    } catch { return false; }
   }
   async templates(includePending = false) {
     const config = this.config();

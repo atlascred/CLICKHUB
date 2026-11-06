@@ -101,3 +101,14 @@ test('webhook oficial percorre eventos, isola WABA/número e preserva leitura co
   await post([{id:'456',changes:[change('123','sent'),change('123','delivered'),change('123','failed')]}]);assert.equal(f.get().recipients[0].status,'read');
  }finally{Object.assign(dispatchConversations,originalDispatch);Object.assign(campaignStore,original);keys.forEach((k,i)=>{if(saved[i]===undefined)delete process.env[k];else process.env[k]=saved[i];});}
 });
+
+test('typing oficial marca recebido como lido com indicador nativo e timeout curto',async()=>{
+ const keys=['META_WHATSAPP_ACCESS_TOKEN','META_WHATSAPP_PHONE_NUMBER_ID','META_WHATSAPP_BUSINESS_ACCOUNT_ID','META_WHATSAPP_APP_SECRET','META_WHATSAPP_VERIFY_TOKEN'];const previous=keys.map(k=>process.env[k]);
+ try {
+  keys.forEach((k,i)=>process.env[k]=i===1?'123':i===2?'456':'private');
+  let calls=0;const client=new OfficialMetaClient(async(url,init)=>{calls++;assert.ok(String(url).endsWith('/123/messages'));assert.deepEqual(JSON.parse(String(init?.body)),{messaging_product:'whatsapp',status:'read',message_id:'wamid.inbound',typing_indicator:{type:'text'}});assert.ok(init?.signal);return Response.json({success:true});});
+  assert.equal(await client.typing('wamid.inbound'),true);assert.equal(await client.typing('meta:123:wamid.inbound'),false);assert.equal(calls,1);
+  assert.equal(await new OfficialMetaClient(async()=>{throw Error('offline');}).typing('wamid.inbound'),false);
+  assert.equal(await new OfficialMetaClient(async()=>Response.json({error:{code:100}},{status:400})).typing('wamid.inbound'),false);
+ }finally{keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
+});

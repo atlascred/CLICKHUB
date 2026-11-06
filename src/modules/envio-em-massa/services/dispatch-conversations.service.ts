@@ -30,6 +30,7 @@ export class DispatchConversationsService {
       });
     } catch (error) { if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002")) throw error; }
   }
+  async typing(messageId: string) { return this.meta.typing(messageId); }
   async windowOpen(conversationId: string) {
     const last = await this.db.chatMessage.findFirst({ where: { conversationId, direction: "inbound" }, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
     return serviceWindowOpen(last?.createdAt);

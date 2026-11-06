@@ -9,8 +9,8 @@ import { commercialPlans } from '../scripts/lib/commercial-plans';
 const phone='5511900000000',phoneId='123';
 const copy=<T>(v:T):T=>structuredClone(v);
 function fixture(){
- const threads:any[]=[],messages:any[]=[],leads:any[]=[],settings=new Map<string,any>(),sends:string[]=[];
- let failSend=false;
+ const threads:any[]=[],messages:any[]=[],leads:any[]=[],settings=new Map<string,any>(),sends:string[]=[],typings:string[]=[];
+ let failSend=false,failTyping=false;
  function match(item:any,where:any={}):boolean{if(!item)return false;return Object.entries(where).every(([key,value]:any)=>{
    if(key==='OR')return value.some((x:any)=>match(item,x));
    if(key==='NOT')return !match(item,value);
@@ -34,13 +34,13 @@ function fixture(){
  },agent:{findMany:async({where}:any)=>{assert.equal(where.zapiInstanceId,'CLICK');return [{id:'nio-agent',name:'Lily',zapiInstanceId:'CLICK',plans:commercialPlans.map((p,i)=>({...p,id:'plan-'+i})),enableTyping:false,enableReplyDelay:false}];}},
  lead:{create:async({data}:any)=>{const l={id:randomUUID(),...copy(data)};leads.push(l);return copy(l);},findUnique:async({where}:any)=>leads.find(l=>l.id===where.id),update:async({where,data}:any)=>{const l=leads.find(l=>l.id===where.id);Object.assign(l,copy(data));return copy(l);}},
  appSetting:{findUnique:async({where}:any)=>settings.get(where.key),upsert:async({where,create,update}:any)=>{const r=settings.has(where.key)?update:create;settings.set(where.key,r);return r;}},$queryRaw:async()=>[],};db.$transaction=async(fn:any)=>fn(db);
- const dispatch=new DispatchConversationsService(db,{sendContent:async(_phone:string,content:any)=>{if(failSend)throw Error('timeout');sends.push(content.text.body);return 'wamid.'+sends.length;}} as any);
+ const dispatch=new DispatchConversationsService(db,{typing:async(id:string)=>{if(failTyping)throw Error('typing unavailable');typings.push(id);return true;},sendContent:async(_phone:string,content:any)=>{if(failSend)throw Error('timeout');sends.push(content.text.body);return 'wamid.'+sends.length;}} as any);
  // Queue mechanics already have concurrency tests; this adapter tests the real NIO engine.
  const batch:any={accept:async(_scope:string,message:any,run:any)=>run([message])};
  const service=new DispatchChatbotService(db,dispatch,batch,{interpretConversation:async()=>null,answerCommercialQuestion:async()=>''} as any,{findByCep:async()=>({available:true,street:'Rua Simulada',neighborhood:'Centro',city:'Cidade Teste',state:'SP'})} as any);
  let seq=0;
  async function say(body:string,id='in-'+(++seq),age=0,type='text') {const m={id,from:phone,type,text:{body},timestamp:String(Math.floor((Date.now()-age)/1000))};await dispatch.receive(m,[],phoneId);return service.process(m,phoneId);}
- return {db,dispatch,service,threads,messages,leads,sends,say,setFail:(v:boolean)=>{failSend=v;}};
+ return {db,dispatch,service,batch,threads,messages,leads,sends,typings,say,setTypingFail:(v:boolean)=>{failTyping=v;},setFail:(v:boolean)=>{failSend=v;}};
 }
 function cpf(){const a=[9,8,7,6,5,4,3,2,0];for(const factor of [10,11]){const mod=a.reduce((s,d,i)=>s+d*(factor-i),0)*10%11;a.push(mod===10?0:mod);}return a.join('');}
 for(const [choice,value]of [['1',55],['2',70],['3',85]] as const)test(`API oficial reutiliza contratação NIO completa, plano ${value}, sem Evolution`,async()=>{
@@ -67,4 +67,32 @@ test('agente NIO indisponível falha sem usar agente padrão ou VIVO',async()=>{
 });
 test('retomar não desbloqueia contatos nem apaga dados já coletados',async()=>{
  const f=fixture();await f.say('oi');const t=f.threads[0];t.memory.nioBotMemory.cep='01001000';await setDispatchBotPaused(f.db,t.id,true);await setDispatchBotPaused(f.db,t.id,false);assert.equal(t.memory.nioBotMemory.cep,'01001000');t.state='DISPATCH_BLOCKED';await assert.rejects(setDispatchBotPaused(f.db,t.id,false),/desbloqueie/);assert.equal(t.state,'DISPATCH_BLOCKED');
+});
+
+test('indicador nativo usa ID recebido e não reaparece em duplicatas ou pausas',async()=>{
+ const f=fixture();await f.say('oi','typing-first');assert.deepEqual(f.typings,['typing-first']);
+ await f.say('oi','typing-first');assert.equal(f.typings.length,1);
+ await setDispatchBotPaused(f.db,f.threads[0].id,true);await f.say('oi','typing-paused');assert.equal(f.typings.length,1);
+});
+test('falha do indicador não impede resposta nem transfere para humano',async()=>{
+ const f=fixture();f.setTypingFail(true);await f.say('oi');assert.equal(f.sends.length,1);assert.equal(f.threads[0].memory.nioBotState,'ASK_CEP');assert.ok(!f.threads[0].memory.nioBotMemory.humanTakeover);
+});
+test('pausa concorrente durante CAS impede envio com snapshot antigo',async()=>{
+ const f=fixture();const update=f.db.chatConversation.updateMany;let raced=false;
+ f.db.chatConversation.updateMany=async(args:any)=>{if(!raced){raced=true;f.threads[0].memory.dispatchBotPaused=true;}return update(args);};
+ await assert.rejects(f.say('oi'),/assumido|bloqueado/);assert.equal(f.sends.length,0);assert.equal(f.threads[0].memory.dispatchBotPaused,true);
+});
+test('alteração concorrente de etiquetas sobrevive ao CAS otimizado',async()=>{
+ const f=fixture();const update=f.db.chatConversation.updateMany;let raced=false;
+ f.db.chatConversation.updateMany=async(args:any)=>{if(!raced){raced=true;f.threads[0].memory.dispatchTagIds=['nova'];}return update(args);};
+ await f.say('oi');assert.equal(f.sends.length,1);assert.deepEqual(f.threads[0].memory.dispatchTagIds,['nova']);assert.equal(f.threads[0].memory.nioBotState,'ASK_CEP');
+});
+
+test('typing inicia antes de esperar a fila e o preparo da resposta',async()=>{
+ const f=fixture();let release!:()=>void,entered!:()=>void;
+ const waiting=new Promise<void>(r=>{release=r;}),started=new Promise<void>(r=>{entered=r;});
+ f.batch.accept=async(_scope:string,message:any,run:any)=>{entered();await waiting;return run([message]);};
+ const work=f.say('oi','early-typing');await started;
+ assert.deepEqual(f.typings,['early-typing']);assert.equal(f.sends.length,0);
+ release();await work;assert.equal(f.sends.length,1);
 });

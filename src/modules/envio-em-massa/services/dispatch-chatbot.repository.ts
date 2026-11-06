@@ -6,12 +6,15 @@ const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.Inp
 
 /** Adapt the existing NIO engine without moving official messages into Evolution. */
 export class DispatchChatbotRepository extends ChatbotRepository {
+  private snapshot?: { state: string; memory: unknown; deletedAt?: Date | null };
+
   constructor(private readonly store: PrismaClient, private readonly threadId: string, private readonly nioAgentId: string, private readonly requestId: string) { super(store); }
 
   override async findOrCreateConversation(phone: string, agentId?: string) {
     if (agentId !== this.nioAgentId) throw new Error("O número oficial atende apenas NIO FIBRA.");
     const thread = await this.store.chatConversation.findFirst({ where: { ...dispatchScope(), id: this.threadId, phone }, include: { messages: { orderBy: { createdAt: "desc" }, take: 10 } } });
     if (!thread) throw new Error("Conversa oficial não encontrada.");
+    this.snapshot = thread;
     return { ...thread, ...this.engineState(thread) };
   }
 
@@ -43,15 +46,22 @@ export class DispatchChatbotRepository extends ChatbotRepository {
   override async updateConversation(input: { id: string; state: string; memory: Prisma.InputJsonValue; leadId?: string }, readBack = true) {
     if (input.id !== this.threadId) throw new Error("Conversa oficial inválida.");
     for (let attempt = 0; attempt < 8; attempt++) {
-      const thread = await this.store.chatConversation.findFirst({ where: { ...dispatchScope(), id: input.id } });
+      // A cached value is only a CAS precondition, never an unconditional write.
+      // Any concurrent pause/tag/status change misses CAS and forces a fresh read.
+      const thread = this.snapshot ?? await this.store.chatConversation.findFirst({ where: { ...dispatchScope(), id: input.id } });
       const outer = recordObject(thread?.memory), memory = recordObject(outer.nioBotMemory);
       if (!thread || thread.state !== "DISPATCH_OPEN" || outer.dispatchBotPaused || memory.humanTakeover || memory.blocked) throw new Error("Atendimento assumido ou bloqueado.");
       const next = recordObject(input.memory);
+      const nextOuter = json({ ...outer, ...(next.name ? { name: next.name } : {}), nioBotState: input.state, nioBotMemory: next, nioAgentId: this.nioAgentId });
       const updated = await this.store.chatConversation.updateMany({ where: { id: input.id, state: "DISPATCH_OPEN", deletedAt: null, memory: { equals: json(outer) } }, data: {
-        memory: json({ ...outer, ...(next.name ? { name: next.name } : {}), nioBotState: input.state, nioBotMemory: next, nioAgentId: this.nioAgentId }),
+        memory: nextOuter,
         ...(input.leadId ? { leadId: input.leadId } : {}), updatedAt: new Date(),
       } });
-      if (updated.count) return readBack ? this.store.chatConversation.findUnique({ where: { id: input.id } }) : null;
+      if (updated.count) {
+        this.snapshot = { ...thread, memory: nextOuter };
+        return readBack ? this.store.chatConversation.findUnique({ where: { id: input.id } }) : null;
+      }
+      this.snapshot = undefined;
     }
     throw new Error("Conversa em atualização; aguarde uma nova tentativa.");
   }
