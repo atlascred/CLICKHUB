@@ -113,17 +113,17 @@ export function WhatsAppVerifierPanel() {
       <Card className="glass-panel neon-ring">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Smartphone className="h-5 w-5 text-blue-300" />
+            <Smartphone className="h-5 w-5 text-primary" />
             Verificar WhatsApp
           </CardTitle>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={handleSubmit}>
-            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-blue-400/30 bg-blue-500/5 p-4 text-sm font-medium text-blue-100 transition hover:bg-blue-500/10">
-              <Upload className="h-4 w-4" />
-              {fileName ? `Planilha carregada: ${fileName}` : "Importar planilha .xlsx, .xls ou .csv"}
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-primary/40 bg-primary/5 p-4 text-sm font-medium text-primary transition hover:bg-primary/10 focus-within:ring-2 focus-within:ring-ring">
+              <Upload className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 break-words">{fileName ? `Planilha carregada: ${fileName}` : "Importar planilha .xlsx, .xls ou .csv"}</span>
               <input
-                className="hidden"
+                className="sr-only"
                 type="file"
                 accept=".xlsx,.xls,.csv"
                 onChange={(event) => void handleFileChange(event.target.files?.[0])}
@@ -147,7 +147,7 @@ export function WhatsAppVerifierPanel() {
             </div>
           </form>
           {error ? (
-            <div className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
+            <div role="alert" className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-200">
               {error}
             </div>
           ) : null}
@@ -187,7 +187,7 @@ export function WhatsAppVerifierPanel() {
                 A planilha baixada remove duplicados, inválidos e números sem WhatsApp. Ela sai com uma coluna chamada WHATSAPP.
               </p>
               {result.summary.errors ? (
-                <p className="rounded-xl border border-amber-400/25 bg-amber-500/10 p-3 text-xs text-amber-100">
+                <p className="rounded-xl border border-amber-400/25 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
                   {result.summary.errors} número(s) não puderam ser verificados por erro da Evolution e foram ignorados.
                 </p>
               ) : null}
@@ -226,9 +226,9 @@ function extractPhoneCandidates(value: string) {
 
 function Metric({ label, value, positive = false }: { label: string; value: number; positive?: boolean }) {
   return (
-    <div className={`rounded-xl border p-3 ${positive ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100" : "border-blue-400/15 bg-blue-500/5"}`}>
+    <div className={`rounded-xl border p-3 ${positive ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200" : "border-border bg-muted/50 text-muted-foreground"}`}>
       <p>{label}</p>
-      <p className="mt-1 text-xl font-semibold text-white">{value}</p>
+      <p className={`mt-1 text-xl font-semibold ${positive ? "text-emerald-800 dark:text-emerald-200" : "text-foreground"}`}>{value}</p>
     </div>
   );
 }
