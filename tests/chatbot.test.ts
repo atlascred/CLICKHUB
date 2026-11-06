@@ -29,7 +29,7 @@ function simulator(scenario: string, options: { state?: string; memory?: object;
   const messages = new Map<string, any>();
   let sequence = 0;
   let persistenceCalls = 0;
-  const conversation = { id: 'conversation-test', state: options.state ?? 'START', memory: clone(options.memory ?? {}), messages: [] as any[] };
+  const conversation = { id: 'conversation-test', state: options.state ?? 'START', memory: clone({ ...(["ASK_DOCUMENT","ASK_BIRTH_DATE","ASK_EMAIL","ASK_BILLING_DUE_DAY","CONFIRM_DATA","CORRECTION"].includes(options.state ?? "") ? { motherName: "Maria Simulada" } : {}), ...(options.memory ?? {}) }), messages: [] as any[] };
   const sends: string[] = [];
   const leads: any[] = [];
   const transcript = { scenario, turns: [] as Array<{ customer: string; lily: string }> }; transcripts.push(transcript);
@@ -77,7 +77,7 @@ async function complete(label: string, selection: string, price: number) {
   await s.say(selection);
   if ((s.conversation.memory as any).pendingUpsellPlanId) await s.say('não');
   assert.equal(s.conversation.state, 'ASK_NAME');
-  await s.say('Cliente Simulado'); assert.equal(s.conversation.state, 'ASK_DOCUMENT');
+  await s.say('Cliente Simulado'); assert.equal(s.conversation.state, 'ASK_MOTHER_NAME'); await s.say('Maria Simulada'); assert.equal(s.conversation.state, 'ASK_DOCUMENT');
   await s.say(fixtureDocument()); assert.equal(s.conversation.state, 'ASK_BIRTH_DATE');
   await s.say('01/01/1995'); assert.equal(s.conversation.state, 'ASK_EMAIL');
   await s.say('teste@example.com'); assert.equal(s.conversation.state, 'ASK_BILLING_DUE_DAY');
@@ -227,8 +227,8 @@ test('41 — confirmação incompleta nunca cria lead', async () => {
 test('42 — troca no resumo exige confirmar o novo valor', async () => {
   const s = simulator('troca no resumo', { state: 'CONFIRM_DATA' }); await s.say('quero mudar para 1 giga'); assert.equal(s.leads.length, 0); assert.equal((s.conversation.memory as any).planValue, 85); assert.equal(s.conversation.state, 'CONFIRM_DATA');
 });
-test('43 — correção inválida não finge que alterou o cadastro', async () => {
-  const s = simulator('correção inválida', { state: 'CORRECTION', memory: { correctionField: 'email' } }); await s.say('inválido'); assert.equal(s.conversation.state, 'CORRECTION'); assert.ok(!(s.conversation.memory as any).email);
+test('43 — correção de e-mail livre preserva resposta para edição manual', async () => {
+  const s = simulator('correção de e-mail', { state: 'CORRECTION', memory: { correctionField: 'email' } }); await s.say('inválido'); assert.equal(s.conversation.state, 'CONFIRM_DATA'); assert.equal((s.conversation.memory as any).email,'inválido');
 });
 test('44 — áudio sem transcrição pede texto e não perde etapa', async () => {
   const s = simulator('áudio indisponível', { state: 'ASK_DOCUMENT' }); const media = await interpretIncomingMedia({ transcribeAudio: async () => '', extractCustomerData: async () => ({}) }, { kind: 'audio', message: '', mediaUrl: 'mock://audio' }); await s.say(media.message); assert.equal(s.conversation.state, 'ASK_DOCUMENT'); assert.ok(s.sends[0].includes('escrever'));
@@ -274,7 +274,7 @@ test('51 — conhecimento oficial funciona sem IA também no início', async () 
 });
 test('52 — várias informações de endereço não são pedidas de novo', async () => {
   const s = simulator('endereço antecipado'); await s.say('Meu nome é Cliente Simulado, CEP 01001000, número 123, complemento sem complemento, quero plano 800 Mega');
-  assert.equal((s.conversation.memory as any).streetNumber, '123'); assert.equal(s.conversation.state, 'ASK_DOCUMENT');
+  assert.equal((s.conversation.memory as any).streetNumber, '123'); assert.equal(s.conversation.state, 'ASK_MOTHER_NAME');
 });
 test('53 — mensagens consecutivas sem rótulos são interpretadas em sequência', async () => {
   const s = simulator('mensagens sem rótulo'); const batch = [{ providerId: 'seq1', body: 'oi' }, { providerId: 'seq2', body: '01001000' }, { providerId: 'seq3', body: '123' }, { providerId: 'seq4', body: 'não' }];
@@ -499,7 +499,7 @@ test('88 — duas contratações do mesmo telefone geram leads distintos com val
     for(const text of ['oi','01001000','123','não','1'])await say(text);
     const agentId=instance==='CLICK'?'agent-click':'agent-giga';const c=f.conversations.find((c:any)=>c.agentId===agentId);
     if(c.memory.pendingUpsellPlanId)await say('não');
-    for(const text of ['Cliente Simulado',fixtureDocument(),'01/01/1995','teste@example.com','10'])await say(text);
+    for(const text of ['Cliente Simulado','Maria Simulada',fixtureDocument(),'01/01/1995','teste@example.com','10'])await say(text);
     assert.equal(f.leads.length,instance==='CLICK'?0:1);await say('sim');assert.equal(c.state,'FINISHED');
   }
   assert.equal(f.leads.length,2);assert.deepEqual(f.leads.map((l:any)=>l.planValue),[55,100]);assert.notEqual(f.leads[0].planId,f.leads[1].planId);
@@ -721,4 +721,76 @@ test('e-mail extraído de mídia é preservado em vez do marcador do anexo',asyn
  const s=simulator('e-mail de mídia',{state:'ASK_EMAIL'});
  await s.say('[Áudio recebido]',undefined,{extractedData:{email:'cliente@example.com'}});
  assert.equal(s.conversation.state,'ASK_BILLING_DUE_DAY');assert.equal((s.conversation.memory as any).email,'cliente@example.com');
+});
+
+test('auditoria — nome completo da mãe é coletado sem substituir o titular',async()=>{
+ const s=simulator('coleta mãe',{state:'ASK_MOTHER_NAME',memory:{name:'Cliente Simulado'}});await s.say('Minha mãe se chama Maria do Nascimento');assert.equal(s.conversation.state,'ASK_DOCUMENT');assert.equal((s.conversation.memory as any).motherName,'Maria do Nascimento');assert.equal((s.conversation.memory as any).name,'Cliente Simulado');
+});
+test('auditoria — nome da mãe ilegível ou incompleto não vira nome de cliente',async()=>{
+ for(const answer of ['Documento recebido','[Áudio não pôde ser transcrito]','Maria']){const s=simulator('mãe inválida',{state:'ASK_MOTHER_NAME',memory:{name:'Cliente Simulado'}});await s.say(answer);assert.equal(s.conversation.state,'ASK_MOTHER_NAME');assert.equal((s.conversation.memory as any).name,'Cliente Simulado');assert.ok(!(s.conversation.memory as any).motherName);}
+});
+test('auditoria — sobrenome Nascimento e nome junto com CPF são preservados',async()=>{
+ for(const answer of ['Cliente do Nascimento',`Cliente Simulado ${fixtureDocument()}`]){const s=simulator('nome realista',{state:'ASK_NAME'});await s.say(answer);assert.equal(s.conversation.state,'ASK_MOTHER_NAME');assert.equal((s.conversation.memory as any).name,answer.startsWith('Cliente do')?'Cliente do Nascimento':'Cliente Simulado');}
+ const s=simulator('nome truncado',{state:'ASK_NAME'});await s.say('Cliente Simulado e');assert.equal(s.conversation.state,'ASK_NAME');
+});
+test('auditoria — opção 8 corrige mãe sem alterar o nome do titular',async()=>{
+ const s=simulator('corrigir mãe',{state:'CORRECTION',memory:{name:'Cliente Simulado',motherName:'Maria Antiga'}});await s.say('8');assert.equal((s.conversation.memory as any).correctionField,'motherName');await s.say('Maria Atualizada');assert.equal(s.conversation.state,'CONFIRM_DATA');assert.equal((s.conversation.memory as any).motherName,'Maria Atualizada');assert.equal((s.conversation.memory as any).name,'Cliente Simulado');
+});
+for(const answer of ['manter','quero manter','Mantwr','Mantes','Não obrigada','manter os 600 mega'])test('auditoria — recusa de upgrade mantém escolha: '+answer,async()=>{
+ const s=simulator('manter plano',{state:'CHOOSE_PLAN',memory:{planId:plans[0].id,planName:plans[0].name,planValue:55,pendingUpsellPlanId:plans[1].id}});await s.say(answer);assert.equal(s.conversation.state,'ASK_NAME');assert.equal((s.conversation.memory as any).planValue,55);assert.equal((s.conversation.memory as any).pendingUpsellPlanId,undefined);
+});
+for(const [answer,price]of [['o plano de 55',55],['70,00',70],['85 reais',85]] as const)test('auditoria — escolha por preço usa catálogo: '+answer,async()=>{
+ const s=simulator('escolha pelo preço',{state:'CHOOSE_PLAN'});await s.say(answer);assert.equal((s.conversation.memory as any).planValue,price);
+});
+for(const [answer,expected]of [['N 811','811'],['N1','1'],['Número da casa certo 750','750'],['110 fundos','110'],['441 Ap 71','441'],['46 ap101','46'],['N° 44 B','44B']] as const)test('auditoria — número de residência: '+answer,async()=>{
+ const s=simulator('número com contexto',{state:'ASK_STREET_NUMBER'});await s.say(answer);assert.equal(s.conversation.state,'ASK_COMPLEMENT');assert.equal((s.conversation.memory as any).streetNumber,expected);
+});
+test('auditoria — data de seis dígitos continua válida e não aceita data impossível',async()=>{
+ const s=simulator('data abreviada',{state:'ASK_BIRTH_DATE',memory:{name:'Cliente Simulado',cpfCnpj:fixtureDocument()}});await s.say('151165');assert.match((s.conversation.memory as any).birthDate,/1965-11-15/);assert.equal(s.conversation.state,'ASK_EMAIL');const bad=simulator('data inválida curta',{state:'ASK_BIRTH_DATE'});await bad.say('310299');assert.equal(bad.conversation.state,'ASK_BIRTH_DATE');
+});
+test('auditoria — bairro corrigido e referência são aplicados sem mudar titular',async()=>{
+ for(const [text,field,value]of [['Bairro Parque Imperial','neighborhood','Parque Imperial'],['Ponto de referência ao lado da praça','complement','ao lado da praça'],['Rua Simulada, bairro Centro, cidade Cidade Teste, UF SP','address','Rua Simulada']] as const){const s=simulator('endereço manual',{state:'CORRECTION',memory:{name:'Cliente Simulado',correctionField:'address',address:'Rua Antiga',streetNumber:'123'}});await s.say(text);assert.equal(s.conversation.state,'CONFIRM_DATA');assert.equal((s.conversation.memory as any)[field],value);assert.equal((s.conversation.memory as any).name,'Cliente Simulado');}
+});
+test('auditoria — pedido de encerrar interrompe mensagens e lembretes preservando etapa',async()=>{
+ const s=simulator('encerrar',{state:'ASK_BIRTH_DATE',memory:{name:'Cliente Simulado'}});await s.say('Encerrar atendimento');assert.equal(s.conversation.state,'ASK_BIRTH_DATE');assert.equal((s.conversation.memory as any).humanTakeover,true);assert.equal((s.conversation.memory as any).followUpPaused,true);const before=s.sends.length;await s.say('oi');assert.equal(s.sends.length,before);
+});
+test('auditoria — mensagens automáticas não criam ciclo e humano pode continuar depois',async()=>{
+ const s=simulator('outro bot',{state:'ASK_CEP'});await s.say('Agradecemos seu contato! Este é o WhatsApp oficial. Responda 1 para atendimento.');assert.equal(s.sends.length,0);assert.equal((s.conversation.memory as any).automationReplyDetected,true);await s.say('01001000');assert.equal(s.conversation.state,'ASK_STREET_NUMBER');assert.equal((s.conversation.memory as any).automationReplyDetected,false);
+});
+test('auditoria — objeções com grafia informal usam somente condições já oficiais',()=>{
+ assert.equal(officialAnswer('tem que pagar alguma coisa antes'),officialAnswer('tem pagamento antecipado?'));assert.equal(officialAnswer('estalaccion é gratis'),officialAnswer('instalação é grátis?'));
+});
+test('auditoria — cadastro antigo em confirmação solicita mãe antes de criar lead',async()=>{
+ const s=simulator('mãe ausente no cadastro antigo',{state:'CONFIRM_DATA',memory:{motherName:undefined,name:'Cliente Simulado',cep:'01001000',streetNumber:'123',complement:'Casa',cpfCnpj:fixtureDocument(),birthDate:'1990-01-01',email:'não sei',emailCollected:true,billingDueDay:10,planId:plans[0].id,planName:plans[0].name,planValue:55}});await s.say('sim');assert.equal(s.conversation.state,'ASK_MOTHER_NAME');assert.equal(s.leads.length,0);await s.say('Maria Simulada');assert.equal(s.conversation.state,'CONFIRM_DATA');await s.say('sim');assert.equal(s.leads[0].motherName,'Maria Simulada');
+});
+test('auditoria — OCR da mãe não substitui o titular',async()=>{
+ const s=simulator('OCR mãe',{state:'ASK_MOTHER_NAME',memory:{name:'Cliente Simulado'}});await s.say('[Documento recebido]',undefined,{extractedData:{motherName:'Maria Simulada',fullName:'Titular Diferente'}});assert.equal(s.conversation.state,'ASK_DOCUMENT');assert.equal((s.conversation.memory as any).name,'Cliente Simulado');assert.equal((s.conversation.memory as any).motherName,'Maria Simulada');
+});
+test('auditoria de áudio — pedir reenvio dos planos conserva etapa e catálogo',async()=>{
+ const s=simulator('reenviar planos por voz',{state:'CHOOSE_PLAN'});await s.say('Manda os planos porque na minha tela apagou, preciso rever por favor');assert.equal(s.conversation.state,'CHOOSE_PLAN');for(const plan of plans)assert.ok(s.sends[0].includes(plan.name));assert.equal(s.leads.length,0);
+});
+test('auditoria de áudio — preferência pelo preço original não aceita upgrade',async()=>{
+ const s=simulator('prefiro preço original',{state:'CHOOSE_PLAN',memory:{planId:plans[0].id,planName:plans[0].name,planValue:55,pendingUpsellPlanId:plans[1].id}});await s.say('Não, eu preferia o de 55 mesmo.');assert.equal(s.conversation.state,'ASK_NAME');assert.equal((s.conversation.memory as any).planValue,55);
+});
+test('auditoria de áudio — número correto com letra não vira complemento',async()=>{
+ const s=simulator('correção número com letra',{state:'ASK_COMPLEMENT',memory:{streetNumber:'215'}});await s.say('O número correto da casa é 215A, isso tem que constar na fatura.');assert.equal(s.conversation.state,'ASK_COMPLEMENT');assert.equal((s.conversation.memory as any).streetNumber,'215A');assert.equal((s.conversation.memory as any).complement,undefined);
+});
+test('auditoria de áudio — CEP falado em blocos não exige digitar novamente',async()=>{
+ const s=simulator('CEP por voz',{state:'ASK_CEP'});await s.say('vinte e um zero meia cinco um meia três');assert.equal((s.conversation.memory as any).cep,'21065163');assert.equal(s.conversation.state,'ASK_STREET_NUMBER');
+});
+test('auditoria de áudio — três falhas de mídia usam atendimento humano sem reiniciar',async()=>{
+ const s=simulator('mídia repetidamente ilegível',{state:'CHOOSE_PLAN'});for(let i=0;i<3;i++)await s.say('[Áudio não pôde ser transcrito]');assert.equal(s.conversation.state,'CHOOSE_PLAN');assert.equal((s.conversation.memory as any).humanTakeover,true);const before=s.sends.length;await s.say('[Áudio não pôde ser transcrito]');assert.equal(s.sends.length,before);
+});
+for(const [text,day]of [['dia cinco',5],['oito',8],['dia dês',10],['quinze',15],['vinte',20],['vinte e cinco',25]] as const)test('auditoria de áudio — vencimento por extenso: '+text,async()=>{
+ const s=simulator('dia por voz',{state:'ASK_BILLING_DUE_DAY'});await s.say(text);assert.equal((s.conversation.memory as any).billingDueDay,day);assert.equal(s.conversation.state,'CONFIRM_DATA');
+});
+test('auditoria — evidência da IA na correção da mãe não troca o titular',async()=>{
+ const s=simulator('correção mãe com IA',{state:'CORRECTION',memory:{name:'Cliente Simulado',correctionField:'motherName'},ai:{interpretConversation:async()=>({intent:'data',tone:'neutral',evidence:{name:'Maria Nova'},reply:''})}});await s.say('Maria Nova');assert.equal((s.conversation.memory as any).motherName,'Maria Nova');assert.equal((s.conversation.memory as any).name,'Cliente Simulado');
+});
+test('auditoria — conjunção após número não é letra da casa',async()=>{
+ const s=simulator('conjunção após número',{state:'ASK_STREET_NUMBER'});await s.say('número 215 e bairro Centro');assert.equal((s.conversation.memory as any).streetNumber,'215');
+});
+test('auditoria — indicação de dado errado não é armazenada como valor corrigido',async()=>{
+ const address=simulator('bairro está errado',{state:'CORRECTION',memory:{name:'Cliente Simulado',neighborhood:'Centro',correctionField:'address'}});await address.say('O bairro está errado');assert.equal(address.conversation.state,'CORRECTION');assert.equal((address.conversation.memory as any).neighborhood,'Centro');
+ const mother=simulator('mãe está errada',{state:'CORRECTION',memory:{name:'Cliente Simulado',motherName:'Maria Simulada',correctionField:'motherName'}});await mother.say('O nome da mãe está errado');assert.equal(mother.conversation.state,'CORRECTION');assert.equal((mother.conversation.memory as any).motherName,'Maria Simulada');
 });

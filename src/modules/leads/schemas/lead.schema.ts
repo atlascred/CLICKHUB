@@ -2,8 +2,9 @@ import { z } from "zod";
 
 export const createLeadSchema = z.object({
   name: z.string().min(2, "Informe o nome do lead."),
+  motherName: z.string().max(160).optional(),
   phone: z.string().min(10, "Informe um telefone valido."),
-  email: z.string().email("Informe um e-mail valido.").optional().or(z.literal("")),
+  email: z.string().max(320).optional().or(z.literal("")),
   cpfCnpj: z.string().optional(),
   birthDate: z.string().optional().or(z.literal("")),
   cep: z.string().optional(),

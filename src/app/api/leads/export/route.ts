@@ -27,6 +27,7 @@ export async function GET(request: Request) {
       Nome: lead.name,
       WhatsApp: lead.phone,
       Email: lead.email ?? "",
+      NomeMae: lead.motherName ?? "",
       CPF: lead.cpfCnpj ?? "",
       DataNascimento: lead.birthDate?.toISOString().slice(0, 10) ?? "",
       Status: lead.kanbanStage?.name ?? lead.status,

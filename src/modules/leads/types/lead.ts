@@ -1,5 +1,6 @@
 export type CreateLeadInput = {
   name: string;
+  motherName?: string;
   phone: string;
   email?: string;
   cpfCnpj?: string;

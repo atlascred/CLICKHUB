@@ -175,6 +175,7 @@ async function normalizeLeadData(data: CreateLeadInput | UpdateLeadInput) {
 
   return {
     name: data.name,
+    motherName: data.motherName === undefined ? undefined : data.motherName.trim(),
     phone: data.phone,
     email: emptyToUndefined(data.email),
     cpfCnpj: emptyToUndefined(data.cpfCnpj),

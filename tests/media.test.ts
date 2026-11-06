@@ -92,3 +92,6 @@ test('source android/ios do dispositivo nunca é decodificado como mídia',async
   const downloaded=await withEvolutionInstance('GIGA CLICK',()=>downloadEvolutionMedia(payload));assert.equal(called,1);assert.deepEqual(downloaded.bytes,bytes);
  }
 });
+test('transcrição descarta eco da instrução da IA em áudio vazio ou ruído',()=>{
+ const {cleanAudioTranscription}=require('../src/services/openai/openai.service');assert.equal(cleanAudioTranscription('Atendimento comercial brasileiro da Click Hubnet. Preserve nomes, números, CEP, CPF, e-mail e datas falados.'),'');assert.equal(cleanAudioTranscription('Quero o plano de seiscentos megas.'),'Quero o plano de seiscentos megas.');
+});

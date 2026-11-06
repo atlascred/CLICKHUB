@@ -17,9 +17,9 @@ export function normalized(value: string) {
 
 export function officialAnswer(text: string): string | undefined {
   const t = normalized(text);
-  if (/adiant|antecip|antes de instalar|pix|deposito/.test(t)) return commercialKnowledge.advancePayment;
+  if (/adiant|antecip|antes de instalar|pag(?:ar|a|o).*(?:alguma coisa )?antes|pix|deposito/.test(t)) return commercialKnowledge.advancePayment;
   if (/primeira (mensalidade|fatura|conta)|primeiro (pagamento|boleto)|comeco a pagar|comeca a pagar/.test(t)) return commercialKnowledge.firstBill;
-  if (/(instal|instalac).*(grat|gratis|taxa|custa|pagar|valor)|taxa de instal/.test(t)) return commercialKnowledge.installation;
+  if (/(instal|instalac|estal).*(grat|gratis|taxa|custa|pagar|valor)|taxa de instal/.test(t)) return commercialKnowledge.installation;
   if (/(quando|prazo|tempo|dias|demora|hoje|amanha).*(instal)|instal.*(quando|prazo|tempo|dias|demora|hoje|amanha)/.test(t)) return commercialKnowledge.deadline;
   if (/aprovad|garantid|cobertura/.test(t)) return commercialKnowledge.approval;
   if (/wi fi|wifi|roteador|equipamento/.test(t)) return /\b5g\b|5 ghz|5ghz/.test(t) ? `${commercialKnowledge.wifi}\n\n${commercialKnowledge.mobile}` : commercialKnowledge.wifi;

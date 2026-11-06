@@ -22,7 +22,7 @@ test('resposta do cliente cancela a espera e nova etapa inicia contagem nova',()
 });
 test('atendimento humano, bloqueio, pausa, encerramento e erro pendente impedem envio',()=>{
  for(const state of ['START','MANUAL','BLOCKED','HUMAN_HANDOFF','FINISHED','FINISHED_UNAVAILABLE']){const c=fixture();c.state=state;assert.equal(nextFollowUp(c,settings,at(2)),null);}
- for(const key of ['humanTakeover','blocked','followUpPaused','salesPaused','followUpClosedAt','pendingBotReply']){const c=fixture();c.memory={[key]:true};assert.equal(nextFollowUp(c,settings,at(2)),null);}
+ for(const key of ['automationReplyDetected','humanTakeover','blocked','followUpPaused','salesPaused','followUpClosedAt','pendingBotReply']){const c=fixture();c.memory={[key]:true};assert.equal(nextFollowUp(c,settings,at(2)),null);}
  const c=fixture();c.ownerUserId='operator';assert.equal(nextFollowUp(c,settings,at(2)),null);
 });
 test('mensagem manual no celular ou CRM e pedido de não receber lembretes são respeitados',()=>{
@@ -59,4 +59,8 @@ test('endpoint do agendador exige segredo e falha fechado sem configuração',as
  const {GET}=require('../src/app/api/cron/conversations-follow-up/route');const before=process.env.CRON_SECRET;
  try{delete process.env.CRON_SECRET;assert.equal((await GET(new Request('https://test.invalid/api/cron/conversations-follow-up'))).status,503);process.env.CRON_SECRET='synthetic-secret-for-test-only';assert.equal((await GET(new Request('https://test.invalid/api/cron/conversations-follow-up'))).status,401);assert.equal((await GET(new Request('https://test.invalid/api/cron/conversations-follow-up',{headers:{authorization:'Bearer wrong-secret'}}))).status,401);}
  finally{if(before===undefined)delete process.env.CRON_SECRET;else process.env.CRON_SECRET=before;}
+});
+test('histórico antigo de outro bot ou pedido de encerrar não gera novo lembrete',()=>{
+ for(const body of ['Encerrar atendimento','Agradecemos seu contato! Este é o WhatsApp oficial. Responda 1 para atendimento.','Nome da rua, bairro, cidade, CEP. Com as informações já consigo ver a disponibilidade.']){const c=fixture();c.messages[1].body=body;assert.equal(nextFollowUp(c,settings,at(2)),null);}
+ const c=fixture();c.state='ASK_MOTHER_NAME';assert.match(nextFollowUp(c,settings,at(2))!.body,/nome completo da sua mãe/);
 });

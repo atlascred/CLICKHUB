@@ -2,6 +2,7 @@ export type LeadCopyKind = "consulta" | "venda";
 
 export type LeadCopyData = {
   name?: string | null;
+  motherName?: string | null;
   phone?: string | null;
   email?: string | null;
   cpfCnpj?: string | null;
@@ -51,7 +52,7 @@ export function buildLeadCopyText(lead: LeadCopyData, kind: LeadCopyKind) {
   const address = [addressBase, cityState].filter(Boolean).join(" – ");
   return [
     `SUBIR VENDA: 🛜 PLANO: ${text(lead.planName) || text(lead.plan?.name)}`,
-    customer[0], "👤 Nome da Mãe: ", `📲 WhatsApp: ${phone}`, customer[1], customer[2],
+    customer[0], `👤 Nome da Mãe: ${text(lead.motherName)}`, `📲 WhatsApp: ${phone}`, customer[1], customer[2],
     `📧 E-mail: ${text(lead.email)}`, `📍 CEP: ${cep}`, `🏠 Endereço: ${address}`,
     `📅 Vencimento: ${lead.billingDueDay ? `Dia ${lead.billingDueDay}` : ""}`,
   ].join("\n");

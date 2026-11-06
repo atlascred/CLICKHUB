@@ -14,3 +14,6 @@ test('origem explícita é fallback; cadastro sem vínculo não recebe operadora
   assert.deepEqual(leadOperatorLabels({source:'chatbot'}),[]);
   assert.equal(leadOriginText({source:'chatbot:click',operatorInstances:['GIGA CLICK']}),'VIVO FIBRA');
 });
+test('nome da mãe vai para copiar venda e e-mail informal continua editável no lead',()=>{
+ const {buildLeadCopyText}=require('../src/modules/leads/clipboard');const {updateLeadSchema}=require('../src/modules/leads/schemas/lead.schema');const text=buildLeadCopyText({name:'Cliente Sintético',motherName:'Maria Simulada'},'venda');assert.match(text,/Nome da Mãe: Maria Simulada/);assert.equal(updateLeadSchema.safeParse({motherName:'Maria Simulada',email:'não sei meu email'}).success,true);
+});

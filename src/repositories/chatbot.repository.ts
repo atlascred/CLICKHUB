@@ -286,6 +286,7 @@ export class ChatbotRepository {
 
   async createLeadFromChat(input: {
     name: string;
+    motherName?: string;
     phone: string;
     email?: string;
     cpfCnpj?: string;
@@ -308,6 +309,7 @@ export class ChatbotRepository {
 
     const data = {
       name: input.name,
+      motherName: input.motherName,
       phone: input.phone,
       email: input.email,
       cpfCnpj: input.cpfCnpj,

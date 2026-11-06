@@ -11,7 +11,7 @@ import { checkMetaWhatsAppNumber, markMetaMessageAsRead, sendMetaTextMessage } f
 import { ZapiService } from "@/services/zapi/zapi.service";
 import { onlyDigits } from "@/utils/mask";
 import { commercialKnowledge, officialAnswer } from "@/modules/chatbot/knowledge";
-import { extractLabeledName, fullName, hasInjection, isExplicitConfirmation, isExplicitRefusal, safeFreeReply, type ConversationInterpretation } from "@/modules/chatbot/intelligence";
+import { extractLabeledName, fullName, isAutomaticReply, hasInjection, isExplicitConfirmation, isExplicitRefusal, safeFreeReply, type ConversationInterpretation } from "@/modules/chatbot/intelligence";
 
 const VALID_BILLING_DAYS = [5, 8, 10, 15, 20, 25];
 
@@ -143,6 +143,11 @@ export class ChatbotEngineService {
     }
     if (currentMemory.humanTakeover === true || currentMemory.blocked === true || ["BLOCKED", "HUMAN_HANDOFF", "MANUAL"].includes(conversation.state)) {
       return { state: conversation.state, replied: false, delayMs: 0, humanTakeover: true };
+    }
+
+    if (isAutomaticReply(input.message)) {
+      if (!currentMemory.pendingBotReply) await this.chatbotRepository.updateConversation({ id: conversation.id, state: conversation.state, memory: JSON.parse(JSON.stringify({ ...currentMemory, automationReplyDetected: true })) }, false);
+      return { state: conversation.state, replied: false, delayMs: 0, automaticReply: true };
     }
 
     const provider = input.provider ?? "zapi";
@@ -317,18 +322,20 @@ export class ChatbotEngineService {
   }): Promise<NextBotResponse> {
     if (input.state === "FINISHED") return { state: "FINISHED", memory: { ...input.memory }, reply: "" };
     const originalText = input.message.trim();
-    const memory = { ...input.memory };
-    if (input.extractedData) applyValidatedExtractedData(memory, input.extractedData);
+    const motherContext = input.state === "ASK_MOTHER_NAME" || (input.state === "CORRECTION" && (input.memory.correctionField === "motherName" || parseCorrectionField(originalText) === "motherName"));
+    const memory = { ...input.memory, automationReplyDetected: false };
+    if (input.extractedData) applyValidatedExtractedData(memory, { ...input.extractedData, ...(motherContext ? { fullName: undefined } : {}) });
     const text = extractedValueForState(input.state, input.extractedData) ?? originalText;
+    if (!/^\[(?:Áudio|Imagem|Documento|Arquivo)/i.test(text)) memory.mediaFailureCount = 0;
     const firstName = getFirstName(memory.name);
     applyParsedCustomerData(memory, text, input.state);
     const evidence = input.interpretation?.evidence ?? {};
-    for (const source of Object.values(evidence)) applyParsedCustomerData(memory, source, "EARLY_DATA");
-    applyValidatedExtractedData(memory, { fullName: evidence.name, cep: evidence.cep, cpf: evidence.document,
+    for (const [key, source] of Object.entries(evidence)) if (key !== "motherName" && !(motherContext && key === "name")) applyParsedCustomerData(memory, source, "EARLY_DATA");
+    applyValidatedExtractedData(memory, { fullName: motherContext ? undefined : evidence.name, motherName: evidence.motherName, cep: evidence.cep, cpf: evidence.document,
       birthDate: evidence.birthDate, email: evidence.email, streetNumber: evidence.streetNumber });
     if (evidence.complement && evidence.complement.length < 160) memory.complement = normalizeComplement(evidence.complement);
     const earlyName = extractLabeledName(originalText);
-    if (earlyName) memory.name = earlyName;
+    if (earlyName && !motherContext && !extractMotherName(originalText)) memory.name = earlyName;
     const earlyCep = originalText.match(/\bcep\s*[:=]?\s*(\d{5}[- ]?\d{3})\b/i)?.[1];
     if (earlyCep) memory.cep = onlyDigits(earlyCep);
     const plans = await this.getPlans(input.agent);
@@ -346,6 +353,10 @@ export class ChatbotEngineService {
       memory.pendingUpsellPlanId = undefined;
       if (input.state === "CONFIRM_DATA" || input.state === "CORRECTION") return { state: "CONFIRM_DATA", memory, reply: `Plano alterado.\n\n${buildSummary(memory)}\n\nConfirma os dados? Responda SIM ou NÃO.` };
       if (input.state !== "START") return { state: input.state, memory, reply: `Anotado: ${mentionedPlan.name} por ${formatMoney(Number(mentionedPlan.price))}/mês.\n\n${promptForState(input.state, firstName)}` };
+    }
+
+    if (isStopRequest(text)) {
+      return { state: input.state, memory: { ...memory, humanTakeover: true, salesPaused: true, followUpPaused: true, takeoverReason: "Cliente pediu para encerrar o atendimento.", takeoverAt: new Date().toISOString() }, reply: "Tudo bem, encerrei o atendimento por aqui. Se precisar, nossa equipe fica à disposição." };
     }
 
     if (isRestartRequest(text)) {
@@ -377,6 +388,8 @@ export class ChatbotEngineService {
     }
 
     if (/^\[(Áudio|Imagem|Documento|Arquivo)/i.test(text) || (input.extractedData && !Object.keys(input.extractedData).length)) {
+      memory.mediaFailureCount = (memory.mediaFailureCount ?? 0) + 1;
+      if (memory.mediaFailureCount >= 3) return { state: input.state, memory: { ...memory, humanTakeover: true, takeoverAt: new Date().toISOString(), takeoverReason: "Falhas repetidas ao interpretar mídia." }, reply: "Não consegui identificar o conteúdo com segurança. Vou sinalizar para uma consultora humana continuar seu atendimento por aqui. 😊" };
       return { state: input.state, memory, reply: `Não consegui identificar o conteúdo com segurança. Pode escrever a informação?\n\n${promptForState(input.state, firstName)}` };
     }
     if (input.state === "ASK_EMAIL" && isEmailAnswer(text)) {
@@ -503,6 +516,10 @@ export class ChatbotEngineService {
       };
     }
 
+    if (input.state === "ASK_COMPLEMENT" && /n[uú]mero\s+(?:correto|certo)|n[uú]mero(?:\s+da\s+casa)?\s+(?:[eé]|correto|certo)/i.test(text)) {
+      const correctedNumber = text.match(/n[uú]mero(?:\s+(?:correto|certo|da|casa|resid[eê]ncia|[eé]|o)){0,6}\s*[:,=-]?\s*(\d{1,6}[a-z]?)(?=\s|[,.]|$)/i)?.[1];
+      if (correctedNumber) { memory.streetNumber = correctedNumber; return { state: "ASK_COMPLEMENT", memory, reply: `Número atualizado para ${correctedNumber}.\n\n${promptForState("ASK_COMPLEMENT", firstName)}` }; }
+    }
     if (input.state === "ASK_COMPLEMENT") {
       memory.complement = normalizeComplement(text);
       if (memory.planId) return nextCustomerDataResponse(memory, `Endereço registrado.\n\n`);
@@ -542,12 +559,12 @@ export class ChatbotEngineService {
         const selectedPending = selectedPlan?.id === pendingUpsell?.id;
         const selectedOriginal = selectedPlan?.id === originalPlan?.id;
 
-        if ((isPositive(text) || selectedPending) && pendingUpsell) {
+        if ((isPositive(text) || /^(?:pode ser|pode sim|aceito)[.!\s]*$/.test(normalizeText(text)) || selectedPending) && pendingUpsell) {
           memory.pendingUpsellPlanId = undefined;
           return this.selectPlanAndConfirm({ memory, plan: pendingUpsell });
         }
 
-        if ((isNegative(text) || selectedOriginal) && originalPlan && pendingUpsell) {
+        if ((isNegative(text) || wantsOriginalPlan(text) || selectedOriginal) && originalPlan && pendingUpsell) {
           memory.pendingUpsellPlanId = undefined;
           memory.declinedUpsellPlanIds = [...(memory.declinedUpsellPlanIds ?? []), pendingUpsell.id];
           return this.selectPlanAndConfirm({
@@ -587,6 +604,13 @@ export class ChatbotEngineService {
       return {
         ...this.selectPlanAndConfirm({ memory, plan: selectedPlan }),
       };
+    }
+
+    if (input.state === "ASK_MOTHER_NAME") {
+      const motherName = extractMotherName(text) || fullName(text);
+      if (!motherName) return { state: "ASK_MOTHER_NAME", memory, reply: "Pode me informar o nome completo da sua mãe, com nome e sobrenome, por favor?" };
+      memory.motherName = motherName;
+      return nextCustomerDataResponse(memory);
     }
 
     if (input.state === "ASK_DOCUMENT") {
@@ -636,6 +660,11 @@ export class ChatbotEngineService {
     }
 
     if (input.state === "CONFIRM_DATA") {
+      const requestedCorrection = parseCorrectionField(text);
+      if (requestedCorrection && /corrig|errad|alter|trocar|mudar|nao [eé]|falta|nome da m[aã]e/i.test(text) && !looksLikeQuestion(text)) {
+        if (validCorrection(requestedCorrection, text, plans)) return this.nextResponse({ ...input, state: "CORRECTION", memory: { ...memory, correctionField: requestedCorrection } });
+        return { state: "CORRECTION", memory: { ...memory, correctionField: requestedCorrection }, reply: correctionPrompt(requestedCorrection) };
+      }
       if (isPositive(text)) {
         if (!memory.cep || !/^\d{8}$/.test(memory.cep)) return { state: "ASK_CEP", memory, reply: promptForState("ASK_CEP") };
         if (coverageDataset(input.agent) && !(await this.validateCoverage(memory.cep, input.agent)).available) return coverageUnavailable(memory, memory.cep);
@@ -648,6 +677,7 @@ export class ChatbotEngineService {
         if (Number(activePlan.price) !== memory.planValue || activePlan.name !== memory.planName) return { state: "CONFIRM_DATA", memory: { ...memory, planValue: Number(activePlan.price), planName: activePlan.name }, reply: `O catálogo foi atualizado. Confira o valor antes de confirmar:\n\n${buildSummary({ ...memory, planValue: Number(activePlan.price), planName: activePlan.name })}\n\nConfirma? Responda SIM ou NÃO.` };
         const lead = await this.chatbotRepository.createLeadFromChat({
           name: memory.name ?? "Lead WhatsApp",
+          motherName: memory.motherName,
           phone: memory.whatsapp ?? input.phone,
           email: memory.email,
           cpfCnpj: memory.cpfCnpj,
@@ -680,7 +710,7 @@ export class ChatbotEngineService {
         return {
           state: "CORRECTION",
           memory,
-          reply: "Sem problemas! 😊 Vamos corrigir.\nMe informe qual dado precisa ser alterado:\n1️⃣ Nome\n2️⃣ CPF\n3️⃣ Data de nascimento\n4️⃣ E-mail\n5️⃣ Endereço\n6️⃣ Vencimento\n7️⃣ Plano\n\n👉 Digite o número da opção que deseja corrigir.\nApós a correção, eu te mostro novamente o resumo completo antes de confirmar. ✅",
+          reply: "Sem problemas! 😊 Vamos corrigir.\nMe informe qual dado precisa ser alterado:\n1️⃣ Nome\n2️⃣ CPF\n3️⃣ Data de nascimento\n4️⃣ E-mail\n5️⃣ Endereço\n6️⃣ Vencimento\n7️⃣ Plano\n8️⃣ Nome da mãe\n\n👉 Digite o número da opção que deseja corrigir.\nApós a correção, eu te mostro novamente o resumo completo antes de confirmar. ✅",
         };
       }
 
@@ -697,7 +727,7 @@ export class ChatbotEngineService {
         return {
           state: "CORRECTION",
           memory,
-          reply: "Me diga qual dado quer corrigir:\n1️⃣ Nome\n2️⃣ CPF\n3️⃣ Data de nascimento\n4️⃣ E-mail\n5️⃣ Endereço\n6️⃣ Vencimento\n7️⃣ Plano",
+          reply: "Me diga qual dado quer corrigir:\n1️⃣ Nome\n2️⃣ CPF\n3️⃣ Data de nascimento\n4️⃣ E-mail\n5️⃣ Endereço\n6️⃣ Vencimento\n7️⃣ Plano\n8️⃣ Nome da mãe",
         };
       }
       if (!memory.correctionField && isCorrectionChoiceOnly(text)) {
@@ -808,14 +838,17 @@ export class ChatbotEngineService {
     const document = parseDocument(text);
     const cep = parseCep(text);
 
-    if (corrected.correctionField === "plan" && selectedPlan) {
+    if (corrected.correctionField === "motherName") {
+      corrected.motherName = extractMotherName(text) || fullName(text);
+    } else if (corrected.correctionField === "plan" && selectedPlan) {
       corrected.planId = selectedPlan.id;
       corrected.planName = selectedPlan.name;
       corrected.planValue = Number(selectedPlan.price);
     } else if (corrected.correctionField === "billing" && billingDay) {
       corrected.billingDueDay = billingDay;
-    } else if (corrected.correctionField === "email" && email) {
-      corrected.email = email;
+    } else if (corrected.correctionField === "email" && isEmailAnswer(text)) {
+      corrected.email = text.trim();
+      corrected.emailCollected = true;
     } else if (corrected.correctionField === "birthDate" && birthDate) {
       corrected.birthDate = birthDate.toISOString();
     } else if (corrected.correctionField === "document" && document.valid) {
@@ -836,8 +869,8 @@ export class ChatbotEngineService {
       corrected.streetNumber = parseSimpleNumber(text) ?? corrected.streetNumber;
     } else if (corrected.correctionField === "address" && /complemento|apto|apartamento|casa|bloco|fundos/.test(normalized)) {
       corrected.complement = normalizeComplement(text.replace(/complemento/gi, "").trim());
-    } else if (corrected.correctionField === "name" && (/nome/.test(normalized) || text.split(/\s+/).length >= 2)) {
-      corrected.name = toTitleCase(text.replace(/nome/gi, "").trim());
+    } else if (corrected.correctionField === "name" && fullName(text)) {
+      corrected.name = fullName(text);
     } else if (selectedPlan) {
       corrected.planId = selectedPlan.id;
       corrected.planName = selectedPlan.name;
@@ -866,10 +899,12 @@ export class ChatbotEngineService {
       corrected.streetNumber = parseSimpleNumber(text) ?? corrected.streetNumber;
     } else if (/complemento|apto|apartamento|casa|bloco|fundos/.test(normalized)) {
       corrected.complement = normalizeComplement(text.replace(/complemento/gi, "").trim());
-    } else if (/nome/.test(normalized) || text.split(/\s+/).length >= 2) {
-      corrected.name = toTitleCase(text.replace(/nome/gi, "").trim());
+    } else if (!corrected.correctionField && (/nome/.test(normalized) || text.split(/\s+/).length >= 2)) {
+      const name = fullName(text);
+      if (name) corrected.name = name;
     }
 
+    if (corrected.correctionField === "address") applyManualAddress(corrected, text);
     return corrected;
   }
 
@@ -961,9 +996,14 @@ type PendingBotReply = { providerId?: string; sending: boolean; next: NextBotRes
 
 type ChatMemory = {
   confusionCount?: number;
+  mediaFailureCount?: number;
+  automationReplyDetected?: boolean;
+  salesPaused?: boolean;
+  followUpPaused?: boolean;
   blocked?: boolean;
   pendingBotReply?: PendingBotReply;
   name?: string;
+  motherName?: string;
   cep?: string;
   address?: string;
   city?: string;
@@ -993,7 +1033,7 @@ type ChatMemory = {
   correctionField?: CorrectionField;
 };
 
-type CorrectionField = "name" | "document" | "birthDate" | "email" | "address" | "billing" | "plan";
+type CorrectionField = "name" | "motherName" | "document" | "birthDate" | "email" | "address" | "billing" | "plan";
 
 type PlanCandidate = {
   id: string;
@@ -1132,6 +1172,8 @@ function parseBirthDate(text: string) {
     day = Number(separated[1]);
     month = Number(separated[2]);
     year = normalizeYear(Number(separated[3]));
+  } else if (numbers.length === 6 && /^\d{6}$/.test(text.trim())) {
+    day = Number(numbers.slice(0, 2)); month = Number(numbers.slice(2, 4)); year = normalizeYear(Number(numbers.slice(4)));
   } else if (numbers.length === 8) {
     day = Number(numbers.slice(0, 2));
     month = Number(numbers.slice(2, 4));
@@ -1160,8 +1202,10 @@ function normalizeYear(year: number) {
 }
 
 function parseSimpleNumber(text: string) {
-  const labeled = text.match(/(?:n[uú]mero|n[º°]|casa)\s*[:=]?\s*(\d{1,6}[a-z]?)/i)?.[1];
-  if (labeled) return labeled;
+  const labeled = text.match(/(?:n[uú]mero(?:\s+da\s+(?:casa|resid[eê]ncia))?(?:\s+(?:[eé]|certo))?|\bn(?:[º°.]|(?=\s*\d))|casa)\s*[:=]?\s*(\d{1,6}(?:[a-z]|\s+[a-z](?=\s*$|[,;]))?(?=\s|$|,))/i)?.[1];
+  if (labeled) return labeled.replace(/\s/g, "");
+  const withComplement = text.trim().match(/^(\d{1,6}[a-z]?)\s*[, -]?\s*(?:ap(?:to|artamento)?\.?\s*\d|casa\b|fundos\b|bloco\b|condom[ií]nio\b)/i);
+  if (withComplement) return withComplement[1];
   if (/^(?:s\/?n|sem n[uú]mero)$/i.test(text.trim())) return "S/N";
   if (/^\d{1,6}[a-z]?$/i.test(text.trim())) return text.trim();
   if (/^(?:zero|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove)(?:\s+(?:zero|um|dois|tr[eê]s|quatro|cinco|seis|sete|oito|nove))*$/i.test(text.trim())) return wordsToDigits(text);
@@ -1170,7 +1214,9 @@ function parseSimpleNumber(text: string) {
 
 function parseBillingDay(text: string) {
   const digits = onlyDigits(text);
-  const candidates = [Number(digits), Number(wordsToDigits(text))].filter(Boolean);
+  const spoken = normalizeText(text).match(/\b(vinte e cinco|vinte|quinze|dez|des|oito|cinco)\b/)?.[1];
+  const spokenDays: Record<string, number> = { "vinte e cinco": 25, vinte: 20, quinze: 15, dez: 10, des: 10, oito: 8, cinco: 5 };
+  const candidates = [Number(digits), spoken ? spokenDays[spoken] : 0, Number(wordsToDigits(text))].filter(Boolean);
   return candidates.find((day) => VALID_BILLING_DAYS.includes(day)) ?? null;
 }
 
@@ -1268,6 +1314,7 @@ function buildSummary(memory: ChatMemory) {
     `💰 ${memory.planValue ? `${formatMoney(memory.planValue)}/mês` : "Não informado"}`,
     "━━━━━━━━━━━━━━━━━━",
     `👤 Nome: ${memory.name ?? "Não informado"}`,
+    `👤 Nome da mãe: ${memory.motherName ?? "Não informado"}`,
     `📲 WhatsApp: ${memory.whatsapp ?? "Não informado"}`,
     `🆔 ${memory.documentType ?? "CPF"}: ${memory.cpfCnpj ?? "Não informado"}`,
     `🎂 Nascimento: ${birthDate}`,
@@ -1412,6 +1459,10 @@ function nextCustomerDataResponse(memory: ChatMemory, prefix = ""): NextBotRespo
     };
   }
 
+  if (!memory.motherName || !fullName(memory.motherName)) {
+    return { state: "ASK_MOTHER_NAME", memory, reply: `${prefix}Qual é o nome completo da sua mãe, por favor? 👤` };
+  }
+
   if (!memory.cpfCnpj || !parseDocument(memory.cpfCnpj).valid) {
     return {
       state: "ASK_DOCUMENT",
@@ -1518,6 +1569,16 @@ function selectPlan(text: string, plans: PlanCandidate[]) {
     });
   }
 
+  const mentionedPrices = [...text.matchAll(/(?:r\$\s*|\b(?:de|por|valor|prefiro|preferia)\s+(?:(?:o|a|de)\s+)*)(\d{2,4}(?:[,.]\d{1,2})?)(?!\d)/gi)].map(match => Number(match[1].replace(",", ".")));
+  const pricedPlans = plans.filter(plan => mentionedPrices.includes(Number(plan.price)));
+  if (pricedPlans.length === 1) return pricedPlans[0];
+  const priceText = text.toLowerCase().trim().replace(/^(?:o )?(?:plano|opcao|internet)?\s*(?:de|por)?\s*(?:r\$)?\s*/, "").replace(/\s*(?:reais|por mes|mensais|mes)$/, "").trim();
+  if (/^\d{2,4}(?:[,.]\d{1,2})?$/.test(priceText)) {
+    const price = Number(priceText.replace(",", "."));
+    const matching = plans.filter(plan => Number(plan.price) === price);
+    if (matching.length === 1) return matching[0];
+  }
+
   const numericChoice = Number(normalized.match(/\b\d+\b/)?.[0]);
   if (numericChoice >= 1 && numericChoice <= plans.length && !normalized.includes("gb")) {
     return plans[numericChoice - 1];
@@ -1542,10 +1603,12 @@ function applyParsedCustomerData(memory: ChatMemory, text: string, state: string
   const billingSource = text.match(/(?:vencimento|vencer|dia)\s*[:=]?\s*(\d{1,2})\b/i)?.[1];
   const billing = state === "ASK_BILLING_DUE_DAY" ? parseBillingDay(text) : billingSource ? parseBillingDay(billingSource) : null;
   if (billing) memory.billingDueDay = billing;
-  const name = extractLabeledName(text) || (state === "ASK_NAME" ? fullName(text) : "");
+  const motherName = extractMotherName(text) || (state === "ASK_MOTHER_NAME" ? fullName(text) : "");
+  if (motherName) memory.motherName = motherName;
+  const name = state === "ASK_MOTHER_NAME" || extractMotherName(text) ? "" : extractLabeledName(text) || (state === "ASK_NAME" ? fullName(text) : "");
   if (name) memory.name = name;
-  const number = text.match(/(?:n[uú]mero|n[º°])\s*[:=]?\s*(\d{1,6}[a-z]?)/i)?.[1];
-  if (number) memory.streetNumber = number;
+  const number = text.match(/(?:n[uú]mero|n[º°])\s*[:=]?\s*(\d{1,6}(?:[a-z]|\s+[a-z](?=\s*$|[,;]))?)/i)?.[1];
+  if (number) memory.streetNumber = number.replace(/\s/g, "");
 }
 
 function shouldParseCepForState(text: string, state: string, birthDate: Date | null) {
@@ -1596,6 +1659,7 @@ function wordsToDigits(value: string) {
     quatro: "4",
     cinco: "5",
     seis: "6",
+    meia: "6",
     sete: "7",
     oito: "8",
     nove: "9",
@@ -1649,6 +1713,7 @@ function spokenDigit(word: string) {
     quatro: "4",
     cinco: "5",
     seis: "6",
+    meia: "6",
     sete: "7",
     oito: "8",
     nove: "9",
@@ -1791,6 +1856,7 @@ function promptForState(state: string, firstName?: string) {
     ASK_COMPLEMENT: "Agora me informe se há complemento para o endereço.",
     ASK_ADDRESS_CONFIRM: "Agora me informe seu nome completo, por gentileza.",
     ASK_NAME: "Agora me informe seu nome completo, por gentileza.",
+    ASK_MOTHER_NAME: "Agora me informe o nome completo da sua mãe, por gentileza.",
     ASK_DOCUMENT: `${name}me informe seu CPF, por favor.`,
     ASK_BIRTH_DATE: "Agora me informe sua data de nascimento no formato DD/MM/AAAA, por favor.",
     ASK_BILLING_DUE_DAY: "Qual vencimento você prefere: 5, 8, 10, 15, 20 ou 25?",
@@ -1819,6 +1885,7 @@ function extractedValueForState(state: string, data?: ExtractedCustomerData) {
     ASK_CEP: data.cep,
     ASK_STREET_NUMBER: data.streetNumber ?? parseStreetNumberFromAddress(data.address),
     ASK_NAME: data.fullName,
+    ASK_MOTHER_NAME: data.motherName,
     ASK_DOCUMENT: data.cpf,
     ASK_BIRTH_DATE: data.birthDate,
     ASK_EMAIL: data.email,
@@ -1853,6 +1920,7 @@ function mediaFallbackReply(state: string, firstName?: string) {
   const replies: Record<string, string> = {
     ASK_CEP: "Recebi o comprovante, mas não consegui identificar o CEP com segurança. Pode me enviar o CEP digitado, por favor? 😊",
     ASK_STREET_NUMBER: "Recebi o comprovante, mas não consegui identificar com segurança o número da residência. Pode me enviar só o número, por favor? 😊",
+    ASK_MOTHER_NAME: "Recebi o documento, mas não consegui confirmar com segurança o nome da sua mãe. Pode me escrever o nome completo dela, por favor? 😊",
     ASK_NAME: "Recebi o documento, mas não consegui confirmar com segurança o nome completo. Pode me escrever seu nome, por favor? 😊",
     ASK_DOCUMENT: "Recebi o documento, mas não consegui confirmar com segurança o CPF ou CNPJ. Pode me enviar digitado, por favor? 😊",
     ASK_BIRTH_DATE: "Recebi o documento, mas não consegui confirmar com segurança a data de nascimento. Pode me enviar no formato 26/01/1998, por favor? 😊",
@@ -1863,10 +1931,12 @@ function mediaFallbackReply(state: string, firstName?: string) {
 
 function parseCorrectionField(text: string): CorrectionField | undefined {
   const normalized = normalizeText(text);
+  if (normalized === "8" || /\bmae\b/.test(normalized)) return "motherName";
   if (normalized === "1" || normalized.includes("nome")) return "name";
   if (normalized === "2" || normalized.includes("cpf") || normalized.includes("documento")) return "document";
   if (normalized === "3" || normalized.includes("nascimento") || normalized.includes("data")) return "birthDate";
   if (normalized === "4" || normalized.includes("email") || normalized.includes("e mail")) return "email";
+  if (/telefone|celular|whatsapp/.test(normalized)) return undefined;
   if (normalized === "5" || normalized.includes("endereco") || normalized.includes("cep") || normalized.includes("numero")) return "address";
   if (normalized === "6" || normalized.includes("vencimento") || normalized.includes("fatura")) return "billing";
   if (normalized === "7" || normalized.includes("plano")) return "plan";
@@ -1875,14 +1945,15 @@ function parseCorrectionField(text: string): CorrectionField | undefined {
 
 function isCorrectionChoiceOnly(text: string) {
   const normalized = normalizeText(text);
-  return /^[1-7]$/.test(normalized) || [
-    "nome", "cpf", "documento", "data de nascimento", "nascimento", "email", "e mail", "endereco", "cep", "vencimento", "plano",
+  return /^[1-8]$/.test(normalized) || [
+    "nome da mae", "mae", "nome", "cpf", "documento", "data de nascimento", "nascimento", "email", "e mail", "endereco", "cep", "vencimento", "plano",
   ].includes(normalized);
 }
 
 function correctionPrompt(field: CorrectionField) {
   const prompts: Record<CorrectionField, string> = {
     name: "Certo 😊 Me informe o nome completo correto.",
+    motherName: "Certo 😊 Me informe o nome completo da sua mãe.",
     document: "Certo 😊 Me informe o CPF correto.",
     birthDate: "Certo 😊 Me informe a data de nascimento correta no formato DD/MM/AAAA.",
     email: "Certo 😊 Me informe o e-mail correto.",
@@ -1895,7 +1966,7 @@ function correctionPrompt(field: CorrectionField) {
 
 function asksForPlanList(text: string) {
   const normalized = normalizeText(text);
-  return ["ver os planos", "quero ver", "opcoes", "opcoes disponiveis", "quais planos", "outros planos"].some((term) => normalized.includes(term));
+  return ["ver os planos", "quero ver", "opcoes", "opcoes disponiveis", "quais planos", "outros planos"].some((term) => normalized.includes(term)) || /(?:manda|mande|envia|envie|mostra|mostre|reenvi).{0,25}(?:planos|opcoes|valores)/.test(normalized);
 }
 
 function asksForPlanRecommendation(text: string) {
@@ -2006,6 +2077,7 @@ function formatAgentRules(rules: unknown) {
 }
 
 function applyValidatedExtractedData(memory: ChatMemory, data: ExtractedCustomerData) {
+  if (data.motherName && fullName(data.motherName)) memory.motherName = fullName(data.motherName);
   if (data.fullName && fullName(data.fullName)) memory.name = fullName(data.fullName);
   if (data.cep && /^\d{8}$/.test(onlyDigits(data.cep))) memory.cep = onlyDigits(data.cep);
   if (data.cpf) {
@@ -2030,10 +2102,11 @@ function conflictingFields(text: string, acceptEmailAnswer = false) {
 function validCorrection(field: CorrectionField, text: string, plans: PlanCandidate[]) {
   switch (field) {
     case "name": return Boolean(fullName(text));
+    case "motherName": return Boolean(extractMotherName(text) || fullName(text));
     case "document": return parseDocument(text).valid;
     case "birthDate": return Boolean(parseBirthDate(text));
-    case "email": return Boolean(parseEmail(text));
-    case "address": return Boolean(parseCep(text) || parseSimpleNumber(text) || /complemento|apartamento|bloco/i.test(text));
+    case "email": return isEmailAnswer(text);
+    case "address": return Boolean(parseCep(text) || parseSimpleNumber(text) || hasManualAddress(text));
     case "billing": return Boolean(parseBillingDay(text));
     case "plan": return Boolean(selectPlan(text, plans));
   }
@@ -2061,7 +2134,8 @@ function applyBatchData(memory: ChatMemory, parts: string[], state: string, plan
     } else if (cursor === "CHOOSE_PLAN") {
       const plan = selectPlan(part, plans);
       if (plan) { memory.planId = plan.id; memory.planName = plan.name; memory.planValue = Number(plan.price); cursor = "ASK_NAME"; }
-    } else if (cursor === "ASK_NAME" && memory.name) cursor = "ASK_DOCUMENT";
+    } else if (cursor === "ASK_NAME" && memory.name) cursor = memory.motherName ? "ASK_DOCUMENT" : "ASK_MOTHER_NAME";
+    else if (cursor === "ASK_MOTHER_NAME" && memory.motherName) cursor = "ASK_DOCUMENT";
     else if (cursor === "ASK_DOCUMENT" && memory.cpfCnpj) cursor = "ASK_BIRTH_DATE";
     else if (cursor === "ASK_BIRTH_DATE" && memory.birthDate) cursor = "ASK_EMAIL";
     else if (cursor === "ASK_EMAIL" && memory.email) cursor = "ASK_BILLING_DUE_DAY";
@@ -2081,6 +2155,7 @@ function needsConversationalInterpretation(text: string, state: string, memory: 
   if (state === "ASK_STREET_NUMBER" && parseSimpleNumber(value)) return false;
   if (state === "CHOOSE_PLAN" && selectPlan(value, plans)) return false;
   if (state === "ASK_NAME" && fullName(value)) return false;
+  if (state === "ASK_MOTHER_NAME" && (extractMotherName(value) || fullName(value))) return false;
   if (state === "ASK_DOCUMENT" && (parseDocument(value).valid || /^[\d.\-/\s]+$/.test(value))) return false;
   if (state === "ASK_BIRTH_DATE" && (parseBirthDate(value) || /^[\d/.\-\s]+$/.test(value))) return false;
   if (state === "ASK_EMAIL" && (parseEmail(value) || value.includes("@"))) return false;
@@ -2100,4 +2175,36 @@ function isEmailAnswer(value: string) {
   if (/nao (sei|tenho|lembro|consigo)|esqueci|sem e-?mail/.test(normalized)) return true;
   if (/voltei|continuar|onde paramos|retomar|irritad|chatead|que saco|muita pergunta|perguntas demais|reclam|demorad/.test(normalized)) return false;
   return !looksLikeQuestion(text) || /^\?+$/.test(text) || /e-?mail|gmail|hotmail|outlook|arroba/.test(normalized);
+}
+
+function extractMotherName(text: string) {
+  const match = text.match(/(?:nome\s+(?:completo\s+)?(?:da|de)\s+(?:minha\s+)?m[aã]e\s*[:=]?|minha\s+m[aã]e\s+(?:se chama|[eé])|m[aã]e\s*[:=])\s*([^;\n]+)/i);
+  return match ? fullName(match[1]) : "";
+}
+
+function wantsOriginalPlan(text: string) {
+  return /^(?:(?:quero|prefiro|vou|pode|continuo com a opcao)\s+)?(?:manter|mantwr|mantes|continuar|ficar)(?:\s+(?:o|a|os|as|com|plano|atual|mesmo|opcao|de|\d+|mega|megas))*[.!\s]*$/.test(normalizeText(text)) || /^nao[ ,.!]*(?:obrigad[oa])?[.!\s]*$/.test(normalizeText(text));
+}
+function isStopRequest(text: string) {
+  return /^(?:quero\s+)?(?:encerrar|encerr[ae]|cancelar|cancele|parar|pare)(?:\s+(?:o|a|de|me|enviar|mandar|atendimento|conversa|mensagens|contato))*[.!\s]*$/.test(normalizeText(text)) || /^(?:nao quero mais|nao tenho mais interesse|nao me (?:mande|envie) mais mensagens)[.!\s]*$/.test(normalizeText(text));
+}
+
+function hasManualAddress(text: string) {
+  if (/^(?:(?:o|a|meu|minha) )?(?:rua|bairro|endereco|avenida|numero|complemento)(?: (?:esta|ta|e|foi))? (?:errad[oa]|incorret[oa]|incomplet[oa])[.! ]*$/.test(normalizeText(text))) return false;
+  return /\b(?:rua|avenida|av\.|travessa|rodovia|alameda|estrada|fazenda|bairro|cidade|complemento|apartamento|apto|bloco|quadra|lote|ponto de refer[eê]ncia)\s+\S/i.test(text);
+}
+function applyManualAddress(memory: ChatMemory, text: string) {
+  const lines = text.trim().slice(0, 1500);
+  const street = [...lines.matchAll(/\b(?:rua|avenida|av\.|travessa|rodovia|alameda|estrada|fazenda)\s+[^\n;,]+?(?=\s+(?:bairro|cidade|cep|numero|n[uú]mero)\b|\s+n[º°]\s*\d|[,;\n]|$)/gi)].at(-1)?.[0];
+  if (street) memory.address = street.trim();
+  const neighborhood = lines.match(/\bbairro\s*[:=-]?\s*([^\n;,]+?)(?=\s+(?:cidade|cep|rua|numero|n[uú]mero)\b|[,;\n]|$)/i)?.[1];
+  if (neighborhood) memory.neighborhood = neighborhood.trim();
+  const city = lines.match(/\bcidade\s*[:=-]?\s*([^\n;,]+?)(?=\s+(?:cep|estado|uf)\b|[,;\n]|$)/i)?.[1];
+  if (city) memory.city = city.trim();
+  const state = lines.match(/\b(?:uf|estado)\s*[:=-]?\s*([a-z]{2})\b/i)?.[1];
+  if (state) memory.state = state.toUpperCase();
+  const number = parseSimpleNumber(lines);
+  if (number) memory.streetNumber = number;
+  const complement = lines.match(/\b(?:complemento|ponto de refer[eê]ncia)\s*[:=-]?\s*([^\n;]+)/i)?.[1] || lines.match(/\b(?:apartamento|apto|ap\.?|bloco|quadra|lote)\s+[^\n;]+/i)?.[0];
+  if (complement) memory.complement = complement.trim();
 }
