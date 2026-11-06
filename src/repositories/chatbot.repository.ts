@@ -38,7 +38,7 @@ export class ChatbotRepository {
   async findOrCreateConversation(phone: string, agentId?: string) {
     const [protectedConversation, existing] = await Promise.all([
       this.db.chatConversation.findFirst({
-      where: { phone, agentId: agentId ?? null, deletedAt: null, OR: [
+      where: { phone, agentId: agentId ?? null, NOT: { state: { startsWith: "DISPATCH_" } }, deletedAt: null, OR: [
         { state: { in: ["BLOCKED", "HUMAN_HANDOFF", "MANUAL"] } },
         { memory: { path: ["humanTakeover"], equals: true } },
         { memory: { path: ["blocked"], equals: true } },
@@ -47,7 +47,7 @@ export class ChatbotRepository {
       orderBy: { updatedAt: "desc" },
     }),
       this.db.chatConversation.findFirst({
-      where: { phone, agentId: agentId ?? null, deletedAt: null },
+      where: { phone, agentId: agentId ?? null, NOT: { state: { startsWith: "DISPATCH_" } }, deletedAt: null },
       include: { messages: { orderBy: { createdAt: "desc" }, take: 10 } },
     }),
     ]);
@@ -99,7 +99,7 @@ export class ChatbotRepository {
 
   async findConversationByPhone(phone: string, agentId?: string) {
     return this.db.chatConversation.findFirst({
-      where: { phone, agentId: agentId ?? null, deletedAt: null },
+      where: { phone, agentId: agentId ?? null, NOT: { state: { startsWith: "DISPATCH_" } }, deletedAt: null },
       include: { messages: { orderBy: { createdAt: "asc" } } },
       orderBy: { updatedAt: "desc" },
     });

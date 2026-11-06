@@ -1,8 +1,11 @@
+import { metaEventDate } from "@/modules/envio-em-massa/lib/dispatch-policy";
+import { dispatchConversations } from "@/modules/envio-em-massa/services/dispatch-conversations.service";
 import { NextResponse } from "next/server";
 import { isValidMetaWebhook, verifyMetaWebhookChallenge } from "@/services/meta-whatsapp";
 import { campaignStore } from "@/modules/envio-em-massa/services/campaign-store";
 import type { RecipientStatus } from "@/modules/envio-em-massa/services/mass-message.service";
 export const runtime = "nodejs";
+export const maxDuration = 60;
 export async function GET(request: Request) {
   const challenge = verifyMetaWebhookChallenge(request);
   return challenge ? new NextResponse(challenge) : new NextResponse("Verificação inválida.", { status: 403 });
@@ -18,7 +21,13 @@ export async function POST(request: Request) {
       for (const change of entry.changes || []) {
         const value = change.value;
         if (change.field !== "messages" || String(value?.metadata?.phone_number_id) !== process.env.META_WHATSAPP_PHONE_NUMBER_ID?.trim()) continue;
+        for (const message of Array.isArray(value.messages) ? value.messages : []) {
+          if (!message || typeof message !== "object") continue;
+          await dispatchConversations.receive(message, Array.isArray(value.contacts) ? value.contacts : [], String(value.metadata.phone_number_id));
+        }
         for (const status of value.statuses || []) {
+          if (!status || typeof status !== "object") continue;
+          await dispatchConversations.status(status, String(value.metadata.phone_number_id));
           const callback = status.biz_opaque_callback_data;
           if (typeof callback !== "string") continue;
           const [id, originalPhone] = callback.split(":");
@@ -37,13 +46,17 @@ export async function POST(request: Request) {
             if (nextStatus === "failed" && ["delivered", "read"].includes(recipient.status)) break;
             if (nextStatus !== "failed" && rank[nextStatus] <= rank[recipient.status]) break;
             recipient.status = nextStatus;
+            const eventTime = metaEventDate(status.timestamp).getTime() ? metaEventDate(status.timestamp).toISOString() : new Date().toISOString();
+            if(nextStatus==="delivered")recipient.deliveredAt=eventTime;
+            if(nextStatus==="read")recipient.readAt=eventTime;
+            if(nextStatus==="failed")recipient.failedAt=eventTime;
             recipient.messageId = status.id;
             recipient.detail = nextStatus === "failed" ? "Falha informada pela Meta." : nextStatus === "read" ? "Leitura confirmada pela Meta." : nextStatus === "delivered" ? "Entrega confirmada pela Meta." : "Enviada pela Meta; aguardando entrega.";
             if (await campaignStore.replace(current, next)) break;
             if (attempt === 4) throw new Error("Conflito ao salvar status.");
           }
         }
-        // Official campaigns never enter the Evolution chatbot or its contact history.
+        // Official replies stay in the dispatch inbox; never invoke an Evolution bot.
       }
     }
     return NextResponse.json({ received: true });

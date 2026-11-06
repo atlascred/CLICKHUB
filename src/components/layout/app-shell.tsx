@@ -14,7 +14,8 @@ type AppShellProps = {
 
 export function AppShell({ title, children }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const isInbox = usePathname() === "/conversas";
+  const pathname = usePathname();
+  const isInbox = pathname === "/conversas" || pathname === "/envio-em-massa/conversas";
   useEffect(() => {
     try { setCollapsed(localStorage.getItem("clickhub-sidebar-collapsed") === "1"); } catch {}
   }, []);

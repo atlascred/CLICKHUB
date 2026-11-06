@@ -9,7 +9,7 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 const primaryPaths = ["/dashboard", "/conversas", "/leads"];
 const groups = [
   { title: "Seu dia a dia", paths: ["/compromissos", "/visao-geral", "/despesas"] },
-  { title: "WhatsApp e cobertura", paths: ["/envio-em-massa", "/verificar-whatsapp", "/saude-evolution", "/ceps", "/sdr-por-voz"] },
+  { title: "WhatsApp e cobertura", paths: ["/envio-em-massa", "/envio-em-massa/conversas", "/verificar-whatsapp", "/saude-evolution", "/ceps", "/sdr-por-voz"] },
   { title: "Gestão", paths: ["/usuarios", "/n8n", "/configuracoes"] },
 ];
 export function MobileNav() {

@@ -1,3 +1,4 @@
+import { dispatchConversations } from "@/modules/envio-em-massa/services/dispatch-conversations.service";
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { authErrorResponse } from "@/lib/api-errors";
@@ -12,7 +13,11 @@ import { buildTemplatePayload } from "@/modules/envio-em-massa/lib/templates";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 const client = new OfficialMetaClient();
-const service = new MassMessageService(campaignStore, (phone, template, id) => client.send(phone, template, id));
+const service = new MassMessageService(campaignStore, async (phone, _template, id) => {
+  const campaign = await campaignStore.get(id);
+  if (!campaign) throw new Error("Campanha não encontrada.");
+  return dispatchConversations.campaignRecipient(campaign, phone);
+});
 async function currentUser() {
   const user = await requireCurrentUser();
   assertPermission(user, permissions.agentsEdit);
@@ -31,7 +36,7 @@ export async function GET(request: Request) {
     const id = new URL(request.url).searchParams.get("id");
     if (id) { validId(id); return NextResponse.json(successResponse("Campanha consultada.", await service.read(id, user.id))); }
     const readiness = officialMetaReadiness();
-    return NextResponse.json(successResponse("Conexão oficial consultada.", { ...readiness, templates: readiness.configured ? await client.templates() : [] }));
+    return NextResponse.json(successResponse("Conexão oficial consultada.", { ...readiness, templates: readiness.configured ? await client.templates(true) : [] }));
   } catch (error) { return failure(error); }
 }
 export async function POST(request: Request) {
@@ -42,19 +47,29 @@ export async function POST(request: Request) {
     validId(body.id);
     if (body.action === "next") return NextResponse.json(successResponse("Campanha atualizada.", await service.next(body.id, user.id, process.env.META_WHATSAPP_PHONE_NUMBER_ID!.trim())));
     if (body.action !== "create" || body.consent !== true) throw new Error("Confirme que os contatos autorizaram o recebimento das mensagens.");
-    if (body.agentId || body.message || body.file || body.media) throw new Error("Esta tela envia exclusivamente modelos aprovados pela API oficial da Meta.");
+    if (body.agentId || body.file || body.media) throw new Error("Esta tela envia exclusivamente modelos aprovados pela API oficial da Meta.");
     const contacts = campaignContacts(body.contacts);
-    const fingerprint = createHash("sha256").update(JSON.stringify({ contacts, templateId: body.templateId, values: body.values, mediaUrl: body.mediaUrl })).digest("hex");
+    const mode = body.mode === "text" ? "text" : "template";
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    if (mode === "text" && (!message || message.length > 4096)) throw new Error("Informe uma mensagem com até 4096 caracteres.");
+    const fingerprint = createHash("sha256").update(JSON.stringify({ contacts, mode, message, templateId: body.templateId, values: body.values, mediaUrl: body.mediaUrl, isTest: Boolean(body.isTest) })).digest("hex");
     const existing = await campaignStore.get(body.id);
     if (existing) {
       if (existing.ownerId !== user.id || existing.fingerprint !== fingerprint) throw new Error("Identificação já usada em outra campanha.");
       return NextResponse.json(successResponse("Campanha já registrada.", existing));
     }
-    const templates = await client.templates();
-    const selected = templates.find(t => t.id === body.templateId);
-    if (!selected) throw new Error("O modelo não está aprovado ou não pertence à conta oficial conectada.");
-    const template = buildTemplatePayload(selected, body.values || {}, body.mediaUrl);
-    await campaignStore.create({ id: body.id, ownerId: user.id, phoneNumberId: process.env.META_WHATSAPP_PHONE_NUMBER_ID!.trim(), fingerprint, createdAt: new Date().toISOString(), template, recipients: contacts.map(phone => ({ phone, status: "queued" })) });
+    let template: unknown = {}, messageBody = message, title = "Mensagem de texto";
+    if (mode === "text") await dispatchConversations.assertTextRecipients(contacts, user);
+    else {
+      const templates = await client.templates();
+      const selected = templates.find(t => t.id === body.templateId);
+      if (!selected) throw new Error("O modelo ainda não está aprovado ou não pertence à conta oficial conectada.");
+      template = buildTemplatePayload(selected, body.values || {}, body.mediaUrl);
+      title = selected.name;
+      messageBody = selected.components.filter(component=>component.text).map(component=>(component.text || "").replace(/\{\{\s*(\w+)\s*\}\}/g,(_match,name)=>String(body.values?.[`${component.type}:${name}`] || ""))).join("\n\n");
+    }
+    if (body.isTest && contacts.length !== 1) throw new Error("O teste individual aceita um único destinatário.");
+    await campaignStore.create({ id: body.id, ownerId: user.id, ownerName: user.name, phoneNumberId: process.env.META_WHATSAPP_PHONE_NUMBER_ID!.trim(), fingerprint, createdAt: new Date().toISOString(), template, mode, title, messageBody, isTest: Boolean(body.isTest), recipients: contacts.map(phone => ({ phone, status: "queued" })) });
     const saved = await service.read(body.id, user.id);
     if (saved.fingerprint !== fingerprint) throw new Error("Identificação já usada em outra campanha.");
     return NextResponse.json(successResponse("Campanha oficial criada.", saved), { status: 201 });

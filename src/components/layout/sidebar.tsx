@@ -9,7 +9,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 
 const sections = [
   { title: "Inteligência comercial", paths: ["/dashboard", "/visao-geral"] },
-  { title: "Relacionamento & vendas", paths: ["/conversas", "/verificar-whatsapp", "/saude-evolution", "/envio-em-massa", "/leads", "/compromissos", "/despesas", "/sdr-por-voz"] },
+  { title: "Relacionamento & vendas", paths: ["/conversas", "/verificar-whatsapp", "/saude-evolution", "/envio-em-massa", "/envio-em-massa/conversas", "/leads", "/compromissos", "/despesas", "/sdr-por-voz"] },
   { title: "Gestão do workspace", paths: ["/n8n", "/usuarios", "/ceps", "/configuracoes"] },
 ];
 

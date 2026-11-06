@@ -8,7 +8,7 @@ export function campaignContacts(text: string) {
   return contacts;
 }
 export type RecipientStatus = "queued" | "sending" | "accepted" | "delivered" | "read" | "failed" | "uncertain";
-export type Campaign = { id: string; ownerId: string; phoneNumberId: string; fingerprint: string; createdAt: string; template: any; recipients: Array<{ phone: string; status: RecipientStatus; messageId?: string; detail?: string; startedAt?: string }> };
+export type Campaign = { id: string; ownerId: string; phoneNumberId: string; fingerprint: string; createdAt: string; mode?: "text" | "template"; title?: string; ownerName?: string; messageBody?: string; isTest?: boolean; template: any; recipients: Array<{ phone: string; status: RecipientStatus; messageId?: string; detail?: string; startedAt?: string; processedAt?: string; deliveredAt?: string; readAt?: string; failedAt?: string }> };
 export interface CampaignStore {
   get(id: string): Promise<Campaign | null>;
   create(campaign: Campaign): Promise<void>;
@@ -53,7 +53,7 @@ export class MassMessageService {
       const latest = await this.read(id, ownerId);
       const updated = structuredClone(latest);
       // A delivery webhook can arrive before the HTTP response; never downgrade it.
-      if (["sending", "uncertain"].includes(updated.recipients[index].status)) Object.assign(updated.recipients[index], outcome);
+      if (["sending", "uncertain"].includes(updated.recipients[index].status)) Object.assign(updated.recipients[index], outcome, {processedAt:new Date().toISOString()});
       else if (outcome.messageId) updated.recipients[index].messageId = outcome.messageId;
       if (await this.store.replace(latest, updated)) return updated;
     }

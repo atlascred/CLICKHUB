@@ -151,6 +151,6 @@ export class InboxRepository {
 }
 
 export function buildConversationAccessWhere(user?: LeadAccessUser, agentScope?: string): Prisma.ChatConversationWhereInput {
-  return { deletedAt: null, ...conversationAgentWhere(user, agentScope),
+  return { deletedAt: null, NOT: { state: { startsWith: "DISPATCH_" } }, ...conversationAgentWhere(user, agentScope),
     ...(user?.role === "EMPLOYEE" ? { ownerUserId: user.id } : {}) };
 }

@@ -81,6 +81,9 @@ test('Evolution não depende da chave global Meta; rotas antigas não enviam',as
 test('webhook oficial percorre eventos, isola WABA/número e preserva leitura contra status atrasado',async()=>{
  const {POST,GET}=require('../src/app/api/whatsapp/meta/webhook/route');
  const {campaignStore}=require('../src/modules/envio-em-massa/services/campaign-store');
+ const {dispatchConversations}=require('../src/modules/envio-em-massa/services/dispatch-conversations.service');
+ const originalDispatch={receive:dispatchConversations.receive,status:dispatchConversations.status};
+ dispatchConversations.receive=async()=>{};dispatchConversations.status=async()=>{};
  const original={get:campaignStore.get,replace:campaignStore.replace};
  const keys=['META_WHATSAPP_APP_SECRET','META_WHATSAPP_PHONE_NUMBER_ID','META_WHATSAPP_BUSINESS_ACCOUNT_ID','META_WHATSAPP_VERIFY_TOKEN'];const saved=keys.map(k=>process.env[k]);
  const f=fixture(async()=> 'wamid.test');await f.service.next(f.get().id,'owner','123');
@@ -96,5 +99,5 @@ test('webhook oficial percorre eventos, isola WABA/número e preserva leitura co
   assert.equal((await post([{id:'other',changes:[change('123','read')]},{id:'456',changes:[change('other','read')]}])).status,200);assert.equal(f.get().recipients[0].status,'sending');
   assert.equal((await post([{id:'456',changes:[change('123','delivered'),change('123','read')]}])).status,200);assert.equal(f.get().recipients[0].status,'read');
   await post([{id:'456',changes:[change('123','sent'),change('123','delivered'),change('123','failed')]}]);assert.equal(f.get().recipients[0].status,'read');
- }finally{Object.assign(campaignStore,original);keys.forEach((k,i)=>{if(saved[i]===undefined)delete process.env[k];else process.env[k]=saved[i];});}
+ }finally{Object.assign(dispatchConversations,originalDispatch);Object.assign(campaignStore,original);keys.forEach((k,i)=>{if(saved[i]===undefined)delete process.env[k];else process.env[k]=saved[i];});}
 });

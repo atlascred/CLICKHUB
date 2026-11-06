@@ -178,3 +178,7 @@ textarea {
   [role="dialog"] button { min-height: 44px; }
   [role="dialog"] input[type="checkbox"], [role="dialog"] input[type="radio"] { min-width: 18px; min-height: 18px; }
 }
+
+/* Official campaigns: keep the reply inbox inside the application viewport. */
+.dispatch-inbox { height: calc(100dvh - 158px); }
+@media(max-width:767px){ .dispatch-inbox { height: calc(100dvh - 214px - env(safe-area-inset-bottom)); min-height: 300px; } }
