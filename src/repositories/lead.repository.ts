@@ -14,7 +14,7 @@ function withOperators<T extends { conversations: Array<{ agent: { zapiInstanceI
 
 export class LeadRepository {
   async findContactById(id: string, user?: LeadAccessUser) {
-    return prisma.lead.findFirst({ where: { id, ...buildLeadAccessWhere(user) }, select: { id: true, name: true, phone: true } });
+    return prisma.lead.findFirst({ where: { id, ...buildLeadAccessWhere(user) }, select: { id: true, name: true, phone: true, source: true } });
   }
 
   async findMany(user?: LeadAccessUser, agentScope?: string) {

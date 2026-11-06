@@ -7,6 +7,7 @@ import { errorResponse, successResponse } from "@/lib/api-response";
 import { requireDispatchUser } from "@/modules/envio-em-massa/lib/dispatch-auth";
 import { dispatchScope, recordObject, serviceWindowOpen } from "@/modules/envio-em-massa/lib/dispatch-policy";
 import { dispatchConversations } from "@/modules/envio-em-massa/services/dispatch-conversations.service";
+import { setDispatchBotPaused } from "@/modules/envio-em-massa/services/dispatch-bot-control";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 const uuid = z.string().uuid();
@@ -38,7 +39,7 @@ export async function GET(request: Request) {
     const summary = new Map(rows.map(r => [r.id, r]));
     const conversations = all.map(item => {
       const memory = recordObject(item.memory), stats = summary.get(item.id);
-      return { id: item.id, phone: item.phone, state: item.state === "DISPATCH_BLOCKED" ? "BLOCKED" : item.state === "DISPATCH_CLOSED" ? "FINISHED" : "START", ownerUserId: item.ownerUserId, owner: item.owner, lead: { name: String(memory.name || item.phone) }, tags: tags.map(t=>recordObject(t.value)).filter(t=>Array.isArray(memory.dispatchTagIds)&&memory.dispatchTagIds.includes(t.id)).map(t=>({id:t.id,label:t.label,color:t.color})), pendingReplyCount: Number(stats?.pending || 0), freeFormWindowOpen: serviceWindowOpen(stats?.lastInbound), lastInboundAt: stats?.lastInbound?.toISOString() || null, messageCount: item._count.messages, messages: item.messages.map(({rawPayload,...message})=>({...message,trustedMedia:Boolean(recordObject(rawPayload).mediaId),deliveryStatus:recordObject(rawPayload).state || null})) };
+      return { id: item.id, phone: item.phone, botPaused: memory.dispatchBotPaused === true || recordObject(memory.nioBotMemory).humanTakeover === true, botState: String(memory.nioBotState || "START"), operator: "NIO FIBRA", state: item.state === "DISPATCH_BLOCKED" ? "BLOCKED" : item.state === "DISPATCH_CLOSED" ? "FINISHED" : "START", ownerUserId: item.ownerUserId, owner: item.owner, lead: { name: String(memory.name || item.phone) }, tags: tags.map(t=>recordObject(t.value)).filter(t=>Array.isArray(memory.dispatchTagIds)&&memory.dispatchTagIds.includes(t.id)).map(t=>({id:t.id,label:t.label,color:t.color})), pendingReplyCount: Number(stats?.pending || 0), freeFormWindowOpen: serviceWindowOpen(stats?.lastInbound), lastInboundAt: stats?.lastInbound?.toISOString() || null, messageCount: item._count.messages, messages: item.messages.map(({rawPayload,...message})=>({...message,trustedMedia:Boolean(recordObject(rawPayload).mediaId),deliveryStatus:recordObject(rawPayload).state || null})) };
     }).filter(item => !["unread","unanswered"].includes(filter || "") || item.pendingReplyCount > 0);
     return NextResponse.json(successResponse("Conversas de disparo consultadas.", { conversations: conversations.slice(0,id?1:limit), total, limit, hasMore: !id && total > limit, employees }), { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return failure(error); }
@@ -46,9 +47,14 @@ export async function GET(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const user = await requireDispatchUser();
-    const data = z.object({ conversationId: uuid, action: z.enum(["assign","block","unblock","close","reopen"]).default("assign"), ownerUserId: uuid.nullable().optional() }).parse(await request.json());
+    const data = z.object({ conversationId: uuid, action: z.enum(["assign","block","unblock","close","reopen","pauseBot","resumeBot"]).default("assign"), ownerUserId: uuid.nullable().optional() }).parse(await request.json());
     if (data.action === "assign" && user.role !== "ADMIN") throw new Error("FORBIDDEN");
     if (data.action === "assign" && data.ownerUserId && !await prisma.user.findFirst({ where: { id: data.ownerUserId, status: "ACTIVE", deletedAt: null }, select:{id:true} })) throw new Error("Responsável indisponível.");
+    if (data.action === "pauseBot" || data.action === "resumeBot") {
+      if (!await prisma.chatConversation.findFirst({ where: { ...dispatchScope(user), id: data.conversationId }, select: { id: true } })) return NextResponse.json(errorResponse("Conversa não encontrada."), { status: 404 });
+      await setDispatchBotPaused(prisma, data.conversationId, data.action === "pauseBot");
+      return NextResponse.json(successResponse("Controle do chatbot atualizado.", null));
+    }
     const result = await prisma.chatConversation.updateMany({ where: { ...dispatchScope(user), id: data.conversationId }, data: data.action === "assign" ? { ownerUserId: data.ownerUserId ?? null } : { state: data.action === "block" ? "DISPATCH_BLOCKED" : data.action === "close" ? "DISPATCH_CLOSED" : "DISPATCH_OPEN" } });
     if (!result.count) return NextResponse.json(errorResponse("Conversa não encontrada."),{status:404});
     return NextResponse.json(successResponse("Conversa atualizada.",null));
@@ -76,6 +82,7 @@ export async function POST(request: Request) {
       const data = z.object({ conversationId: uuid, requestId: uuid, content: z.string().trim().min(1).max(4096) }).parse(await request.json()); conversationId = data.conversationId; requestId = data.requestId; content = data.content;
     }
     if (!await prisma.chatConversation.findFirst({ where: { ...dispatchScope(user), id: conversationId },select:{id:true} })) return NextResponse.json(errorResponse("Conversa não encontrada."),{status:404});
+    await setDispatchBotPaused(prisma, conversationId, true);
     const id = await dispatchConversations.send({ threadId: conversationId, requestId, body: content, file });
     return NextResponse.json(successResponse("Mensagem aceita pela Meta.",{messageId:id}));
   } catch (error) { return failure(error); }

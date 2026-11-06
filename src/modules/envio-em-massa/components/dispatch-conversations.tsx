@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Ban, CheckCircle2, FileText, Filter, MessageCircleMore, Mic, Paperclip, Search, Send, Square, Trash2, X } from "lucide-react";
+import { ArrowLeft, Bot, Ban, CheckCircle2, FileText, Filter, MessageCircleMore, Mic, Paperclip, Search, Send, Square, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import { useDispatchPolling, useDispatchResource } from "../hooks/use-dispatch-r
 import { useCurrentUser } from "@/hooks/use-current-user";
 
 type Message = { id: string; direction: string; body: string; createdAt: string; trustedMedia?: boolean; deliveryStatus?: string };
-type Thread = { freeFormWindowOpen: boolean; tags: DispatchTag[]; pendingReplyCount: number; id: string; phone: string; state: string; ownerUserId: string | null; lead: { name: string } | null; owner: { name: string } | null; messages: Message[] };
+type Thread = { botPaused?: boolean; botState?: string; operator?: string; freeFormWindowOpen: boolean; tags: DispatchTag[]; pendingReplyCount: number; id: string; phone: string; state: string; ownerUserId: string | null; lead: { name: string } | null; owner: { name: string } | null; messages: Message[] };
 type InboxData = { conversations: Thread[]; employees: Array<{ id: string; name: string }>; total: number; limit: number; hasMore: boolean };
 type MediaBody = { kind: "media"; mediaKind: "image" | "video" | "audio" | "document"; fileName: string; mimeType: string; dataUrl: string; caption?: string };
 
@@ -33,6 +33,10 @@ export function DispatchConversations() {
   const [listLimit, setListLimit] = useState(100);
   const { data: user } = useCurrentUser();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("conversation");
+    if (id && /^[0-9a-f-]{36}$/i.test(id)) setSelectedId(id);
+  }, []);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [message, setMessage] = useState("");
@@ -98,6 +102,22 @@ export function DispatchConversations() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function toggleChatbot() {
+    if (!thread || saving) return;
+    const paused = Boolean(thread.botPaused);
+    if (paused && !window.confirm("Retomar o chatbot NIO nesta conversa? Confira o histórico antes de continuar; ele responderá à próxima mensagem do cliente.")) return;
+    setSaving(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/envio-em-massa/conversas", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: thread.id, action: paused ? "resumeBot" : "pauseBot" }) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.message || "Não foi possível atualizar o chatbot.");
+      await Promise.all([inbox.refresh(), detail.refresh()]);
+      setNotice(paused ? "Chatbot NIO retomado. Aguardando a próxima mensagem do cliente." : "Conversa assumida. Chatbot NIO pausado.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Falha ao atualizar chatbot."); }
+    finally { setSaving(false); }
   }
 
   async function toggleBlocked() {
@@ -337,6 +357,8 @@ export function DispatchConversations() {
           {selectedId ? <>
             <div className="shrink-0 border-b bg-card p-4">
               <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="ghost" size="icon" className="lg:hidden" aria-label="Voltar às conversas" onClick={() => setSelectedId(null)}><ArrowLeft className="h-4 w-4" /></Button><p className="min-w-[180px] flex-1 truncate text-sm font-semibold">{thread?.lead?.name ?? thread?.phone ?? "Conversa"}</p>{thread?.state === "BLOCKED" ? <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[10px] font-semibold text-rose-700">Bloqueado</span> : null}
+              {thread && <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[10px] font-semibold text-sky-800 dark:bg-sky-950 dark:text-sky-200">NIO FIBRA · {thread.botPaused ? "Atendimento manual" : thread.botState === "FINISHED" ? "Cadastro concluído" : "Chatbot ativo"}</span>}
+              {thread && <Button type="button" variant="outline" size="sm" disabled={saving || thread.state === "BLOCKED"} className="h-9 rounded-xl text-xs" onClick={() => void toggleChatbot()}><Bot className="h-4 w-4" />{thread.botPaused ? "Retomar chatbot" : "Assumir atendimento"}</Button>}
               {user?.role === "ADMIN" && thread ? <label className="flex items-center gap-2 text-xs">Responsável<select aria-label="Atribuir responsável" disabled={saving} value={thread.ownerUserId ?? ""} onChange={(event) => void assign(event.target.value)} className="h-9 max-w-52 rounded-full border border-primary/20 bg-primary/10 px-3 text-xs font-medium text-primary"><option value="">Sem responsável</option>{detail.data?.employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label> : thread && <span className="inline-flex max-w-52 truncate rounded-full border bg-muted/60 px-3 py-1.5 text-xs font-medium">{thread.owner?.name ?? "Sem responsável"}</span>}
               {thread && <DispatchTags key={thread.id} conversationId={thread.id} tags={thread.tags??[]} onChange={async()=>{await Promise.all([inbox.refresh(),detail.refresh()]);}}/>}
               {thread && <DispatchQuickMessages key={`quick-${thread.id}`} conversationId={thread.id} onSelect={setMessage} />}

@@ -1,5 +1,6 @@
 import { metaEventDate } from "@/modules/envio-em-massa/lib/dispatch-policy";
 import { dispatchConversations } from "@/modules/envio-em-massa/services/dispatch-conversations.service";
+import { dispatchChatbot } from "@/modules/envio-em-massa/services/dispatch-chatbot.service";
 import { NextResponse } from "next/server";
 import { isValidMetaWebhook, verifyMetaWebhookChallenge } from "@/services/meta-whatsapp";
 import { campaignStore } from "@/modules/envio-em-massa/services/campaign-store";
@@ -24,6 +25,7 @@ export async function POST(request: Request) {
         for (const message of Array.isArray(value.messages) ? value.messages : []) {
           if (!message || typeof message !== "object") continue;
           await dispatchConversations.receive(message, Array.isArray(value.contacts) ? value.contacts : [], String(value.metadata.phone_number_id));
+          await dispatchChatbot.process(message, String(value.metadata.phone_number_id));
         }
         for (const status of value.statuses || []) {
           if (!status || typeof status !== "object") continue;
@@ -56,7 +58,7 @@ export async function POST(request: Request) {
             if (attempt === 4) throw new Error("Conflito ao salvar status.");
           }
         }
-        // Official replies stay in the dispatch inbox; never invoke an Evolution bot.
+        // Reuse the NIO flow through the official transport, inside the dispatch inbox.
       }
     }
     return NextResponse.json({ received: true });

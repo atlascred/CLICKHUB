@@ -150,7 +150,7 @@ export class ChatbotEngineService {
     if (input.providerId && provider === "zapi") {
       await this.zapiService.markAsRead(input.providerId, phone, agentConfig(agent));
     }
-    if (input.providerId && provider === "meta") {
+    if (input.providerId && provider === "meta" && !this.delivery) {
       await markMetaMessageAsRead(input.providerId);
     }
     const pending = currentMemory.pendingBotReply;

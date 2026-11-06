@@ -19,7 +19,7 @@ export function conversationAgentWhere(user?: LeadAccessUser, requestedScope?: u
 }
 export function leadSourceWhere(user?: LeadAccessUser, requestedScope?: unknown): Prisma.LeadWhereInput {
   const scope = resolveLeadAgentScope(user, requestedScope);
-  // The existing bot records both agents with source=chatbot. Use the actual
-  // conversation binding, without changing historical leads or the bot writer.
-  return scope === "both" ? {} : { conversations: { some: conversationAgentWhere(user, scope) } };
+  // Evolution leads use the actual agent binding; isolated official NIO leads
+  // carry an explicit source so they remain visible under the NIO filter.
+  return scope === "both" ? {} : { OR: [{ conversations: { some: conversationAgentWhere(user, scope) } }, { source: scope === "click" ? "chatbot:click" : "chatbot:giga" }] };
 }

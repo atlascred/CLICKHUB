@@ -44,7 +44,7 @@ export class DispatchConversationsService {
     const content = campaign.mode === "text" ? { type: "text", text: { body: campaign.messageBody || "" } } : { type: "template", template: campaign.template, biz_opaque_callback_data: `${campaign.id}:${phone}` };
     return this.send({ threadId: thread.id, requestId: `${campaign.id}:${phone}`, body: campaign.messageBody || `Modelo: ${campaign.template?.name || "Mensagem aprovada"}`, content, requireWindow: campaign.mode === "text", campaignId: campaign.id });
   }
-  async send(input: { threadId: string; requestId: string; body: string; content?: Record<string, unknown>; file?: File; requireWindow?: boolean; campaignId?: string }) {
+  async send(input: { threadId: string; requestId: string; body: string; content?: Record<string, unknown>; file?: File; requireWindow?: boolean; campaignId?: string; automated?: boolean }) {
     const thread = await this.db.chatConversation.findFirst({ where: { ...dispatchScope(), id: input.threadId } });
     if (!thread) throw new MetaRequestError("Conversa oficial não encontrada.", false);
     if (thread.state === "DISPATCH_BLOCKED") throw new MetaRequestError("Contato bloqueado. Desbloqueie antes de enviar.", false);
@@ -65,6 +65,11 @@ export class DispatchConversationsService {
     let mediaId: string | undefined;
     let nativeId: string | undefined;
     try {
+      if (input.automated) {
+        const latest = await this.db.chatConversation.findFirst({ where: { ...dispatchScope(), id: thread.id } });
+        const memory = recordObject(latest?.memory), bot = recordObject(memory.nioBotMemory);
+        if (!latest || latest.state !== "DISPATCH_OPEN" || memory.dispatchBotPaused || bot.humanTakeover || bot.blocked) throw new MetaRequestError("Chatbot pausado ou contato bloqueado.", false);
+      }
       let content = input.content || { type: "text", text: { body: input.body } };
       if (input.file) {
         mediaId = await this.meta.upload(input.file);

@@ -23,3 +23,6 @@ test('permissões de colaborador e escopo de operadora são preservados',async()
 test('lead inexistente ou conversa sem acesso não cria uma conversa alternativa',async()=>{
  const f=setup({lead:null});assert.equal((await f.service.resolve('missing',user)).status,'not_found');assert.equal(f.queries.length,1);assert.equal((await setup({conversations:[]}).service.resolve('lead',user)).status,'forbidden');
 });
+test('lead do número oficial abre Conversas de Disparo preservando o escopo do responsável',async()=>{
+ const f=setup({lead:{name:'Cliente',phone:'5511900000000',source:'chatbot:click'},conversations:[{id:'official',agentId:null,state:'DISPATCH_OPEN',agent:null}]});const r=await f.service.resolve('lead',user);if(r.status!=='success')throw Error();assert.deepEqual(r.conversations,[{id:'official',agentId:null,instanceName:'CLICK',dispatch:true}]);assert.equal(f.queries[2].where.OR[1].memory.equals,'meta-dispatch');
+});

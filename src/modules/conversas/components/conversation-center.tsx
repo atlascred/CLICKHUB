@@ -112,7 +112,7 @@ const TAG_COLORS = [
   { value: "slate", label: "Cinza" },
 ];
 
-type LeadConversationOption = { id: string; agentId: string | null; instanceName: string };
+type LeadConversationOption = { id: string; agentId: string | null; instanceName: string; dispatch?: boolean };
 
 export function ConversationCenter() {
   const requestedLeadId = useSearchParams().get("lead");
@@ -173,6 +173,7 @@ export function ConversationCenter() {
   const latestLoadRef = useRef(loadConversations);
 
   function openLeadConversation(option: LeadConversationOption) {
+    if (option.dispatch) { window.location.assign(`/envio-em-massa/conversas?conversation=${encodeURIComponent(option.id)}`); return; }
     leadNavigationPending.current = false;
     setLeadConversations([]);
     selectedIdRef.current = option.id;

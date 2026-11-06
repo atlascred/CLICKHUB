@@ -11,7 +11,7 @@ test('filtros usam vínculos CLICK/GIGA reais, sem mudar source do chatbot',()=>
  assert.deepEqual(conversationAgentWhere(admin,'giga'),{agent:{zapiInstanceId:'GIGA CLICK'}});
  assert.deepEqual(conversationAgentWhere(employee,'giga'),{agent:{zapiInstanceId:'CLICK'}});
  assert.equal(resolveLeadAgentScope(admin,'both'),'both');
- assert.deepEqual(leadSourceWhere(employee,'giga'),{conversations:{some:{agent:{zapiInstanceId:'CLICK'}}}});
+ assert.deepEqual(leadSourceWhere(employee,'giga'),{OR:[{conversations:{some:{agent:{zapiInstanceId:'CLICK'}}}},{source:'chatbot:click'}]});
  assert.deepEqual(leadSourceWhere(admin),{});
 });
 test('repositório combina restrição de funcionário com instância; detalhe mantém paginação',async()=>{
