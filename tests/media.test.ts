@@ -13,11 +13,11 @@ const bytes=Buffer.from('synthetic media fixture');const base64=bytes.toString('
 function webhook(type:string,wrapper?:string){const message={[type]:{url:'https://mmg.whatsapp.net/media.enc',mimetype:type==='audioMessage'?'audio/ogg':type==='imageMessage'?'image/png':type==='videoMessage'?'video/mp4':'application/pdf',fileName:'arquivo.pdf',mediaKey:'fake-media-key'}};return{event:'messages.upsert',instance:'GIGA CLICK',data:{key:{id:'fixture',remoteJid:'5511900000002@s.whatsapp.net',fromMe:false},message:wrapper?{[wrapper]:{message}}:message}};}
 
 test('áudio usa sendWhatsAppAudio, campo audio e conversão de WebM/Opus',async()=>{
- let calls=0;global.fetch=async(url,options)=>{calls++;assert.match(String(url),/\/message\/sendWhatsAppAudio\/CLICK$/);const body=JSON.parse(String(options?.body));assert.equal(body.audio,base64);assert.equal(body.encoding,true);assert.equal(body.media,undefined);assert.equal((options?.headers as any).apikey,'fake-click');return Response.json({key:{id:'sent'}},{status:201});};
+ let calls=0;global.fetch=async(url,options)=>{if(String(url).includes('/instance/connectionState/'))return Response.json({instance:{state:'open'}});calls++;assert.match(String(url),/\/message\/sendWhatsAppAudio\/CLICK$/);const body=JSON.parse(String(options?.body));assert.equal(body.audio,base64);assert.equal(body.encoding,true);assert.equal(body.media,undefined);assert.equal((options?.headers as any).apikey,'fake-click');return Response.json({key:{id:'sent'}},{status:201});};
  await withEvolutionInstance('CLICK',()=>sendEvolutionAudioMessage({to:'11900000002',audio:`data:audio/webm;codecs=opus;base64,${base64}`,mimeType:'audio/webm;codecs=opus'}));assert.equal(calls,1);
 });
 test('fallback multipart usa file no endpoint correto e só após rejeição 415',async()=>{
- let calls=0;global.fetch=async(url,options)=>{calls++;assert.match(String(url),/sendWhatsAppAudio\/GIGA%20CLICK$/);if(calls===1)return Response.json({message:'Unsupported media type'},{status:415});const form=options?.body as FormData;assert.ok(form.get('file') instanceof File);assert.equal(form.get('media'),null);assert.equal(form.get('number'),'5511900000002');return Response.json({key:{id:'sent'}},{status:201});};
+ let calls=0;global.fetch=async(url,options)=>{if(String(url).includes('/instance/connectionState/'))return Response.json({instance:{state:'open'}});calls++;assert.match(String(url),/sendWhatsAppAudio\/GIGA%20CLICK$/);if(calls===1)return Response.json({message:'Unsupported media type'},{status:415});const form=options?.body as FormData;assert.ok(form.get('file') instanceof File);assert.equal(form.get('media'),null);assert.equal(form.get('number'),'5511900000002');return Response.json({key:{id:'sent'}},{status:201});};
  await withEvolutionInstance('GIGA CLICK',()=>sendEvolutionAudioMessage({to:'5511900000002',audio:base64,mimeType:'audio/ogg'}));assert.equal(calls,2);
 });
 for(const kind of ['imagem','video','documento'] as const)test(`envio de ${kind} mantém tipo, nome e legenda`,async()=>{
@@ -25,7 +25,7 @@ for(const kind of ['imagem','video','documento'] as const)test(`envio de ${kind}
  await withEvolutionInstance('CLICK',()=>sendEvolutionMediaMessage({to:'5511900000002',kind,media:`data:application/octet-stream;base64,${base64}`,fileName:'teste.ext',caption:'Legenda'}));
 });
 test('falhas 500 e timeout não provocam reenvio e não escondem o erro original',async()=>{
- for(const mode of ['500','timeout']){let calls=0;global.fetch=async()=>{calls++;if(mode==='timeout')throw new DOMException('timeout','TimeoutError');return Response.json({message:'Failed to convert audio'},{status:500});};await assert.rejects(withEvolutionInstance('CLICK',()=>sendEvolutionAudioMessage({to:'5511900000002',audio:base64})));assert.equal(calls,1);}
+ for(const mode of ['500','timeout']){let calls=0;global.fetch=async(url)=>{if(String(url).includes('/instance/connectionState/'))return Response.json({instance:{state:'open'}});calls++;if(mode==='timeout')throw new DOMException('timeout','TimeoutError');return Response.json({message:'Failed to convert audio'},{status:500});};await assert.rejects(withEvolutionInstance('CLICK',()=>sendEvolutionAudioMessage({to:'5511900000002',audio:base64})));assert.equal(calls,1);}
 });
 for(const [type,kind]of [['audioMessage','audio'],['imageMessage','imagem'],['videoMessage','video'],['documentMessage','documento']] as const)test(`recebimento ${kind} reconhece envelope e anexo privado`,()=>{
  for(const wrapper of [undefined,'ephemeralMessage','viewOnceMessageV2','documentWithCaptionMessage']){
@@ -94,4 +94,26 @@ test('source android/ios do dispositivo nunca é decodificado como mídia',async
 });
 test('transcrição descarta eco da instrução da IA em áudio vazio ou ruído',()=>{
  const {cleanAudioTranscription}=require('../src/services/openai/openai.service');assert.equal(cleanAudioTranscription('Atendimento comercial brasileiro da Click Hubnet. Preserve nomes, números, CEP, CPF, e-mail e datas falados.'),'');assert.equal(cleanAudioTranscription('Quero o plano de seiscentos megas.'),'Quero o plano de seiscentos megas.');
+});
+
+test('áudio offline falha antes de upload/conversão e consulta somente a instância selecionada',async()=>{
+ for(const state of ['close','connecting']) {
+  let calls=0;global.fetch=async(url,options)=>{calls++;assert.equal(String(url),'https://giga.test/instance/connectionState/GIGA%20CLICK');assert.equal((options?.headers as any).apikey,'fake-giga');return Response.json({instance:{state}});};
+  await assert.rejects(withEvolutionInstance('GIGA CLICK',()=>sendEvolutionAudioMessage({to:'5511900000002',audio:base64})),/VIVO FIBRA.*desconectado.*mantido/);assert.equal(calls,1);
+ }
+});
+test('conexão que cai depois da verificação mostra instrução clara sem reenviar',async()=>{
+ let sends=0;global.fetch=async(url)=>{if(String(url).includes('/connectionState/'))return Response.json({instance:{state:'open'}});sends++;return Response.json({response:{message:'Error: Connection Closed'}},{status:500});};
+ await assert.rejects(withEvolutionInstance('CLICK',()=>sendEvolutionAudioMessage({to:'5511900000002',audio:base64})),/NIO FIBRA.*desconectado/);assert.equal(sends,1);
+});
+test('somente Ogg com cabeçalho Opus real pula a conversão, mesmo com MIME incorreto',async()=>{
+ const opus=Buffer.concat([Buffer.from('OggS'),Buffer.alloc(24),Buffer.from('OpusHead'),Buffer.alloc(20)]).toString('base64');
+ for(const [audio,encoding,mimeType] of [[opus,false,'audio/ogg'],[base64,true,'audio/ogg'],[base64,true,'audio/mp4']] as const){
+  let sends=0;global.fetch=async(url,options)=>{if(String(url).includes('/connectionState/'))return Response.json({instance:{state:'open'}});sends++;const body=JSON.parse(String(options?.body));assert.equal(body.encoding,encoding);assert.equal(body.audio,audio);return Response.json({key:{id:'sent'}});};
+  await withEvolutionInstance('CLICK',()=>sendEvolutionAudioMessage({to:'5511900000002',audio,mimeType}));assert.equal(sends,1);
+ }
+});
+test('consulta de conexão indisponível não envia áudio nem tenta outra instância',async()=>{
+ let calls=0;global.fetch=async()=>{calls++;throw new DOMException('timeout','TimeoutError');};
+ await assert.rejects(withEvolutionInstance('CLICK',()=>sendEvolutionAudioMessage({to:'5511900000002',audio:base64})),/verificar a conexão.*mantido/);assert.equal(calls,1);
 });

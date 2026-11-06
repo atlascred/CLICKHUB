@@ -260,26 +260,55 @@ export async function setEvolutionChatPresence(input: {
   return false;
 }
 
+function audioConnectionMessage(instanceName: string) {
+  const name = instanceName === "GIGA CLICK" ? "VIVO FIBRA" : instanceName === "CLICK" ? "NIO FIBRA" : "selecionado";
+  return `O WhatsApp da ${name} está desconectado ou reconectando na Evolution. Reconecte essa instância antes de enviar. O áudio foi mantido para uma nova tentativa.`;
+}
+
+async function assertEvolutionAudioConnection(config: ReturnType<typeof getEvolutionConfig>) {
+  let response: Response;
+  try {
+    response = await fetch(`${config.baseUrl}/instance/connectionState/${encodeURIComponent(config.instanceName)}`, {
+      headers: { apikey: config.apiKey }, cache: "no-store", signal: createEvolutionTimeoutSignal(3_000),
+    });
+  } catch { throw new Error("Não foi possível verificar a conexão do WhatsApp. Seu áudio foi mantido; tente novamente em instantes."); }
+  const result = await parseApiResponse(response);
+  const state = String(result?.instance?.state ?? result?.state ?? result?.data?.state ?? "").toLowerCase();
+  if (["close", "closed", "connecting", "disconnected", "refused"].includes(state)) throw new Error(audioConnectionMessage(config.instanceName));
+  if (!response.ok || !["open", "connected", "online"].includes(state)) throw new Error("Não foi possível confirmar a conexão do WhatsApp. Seu áudio foi mantido; confira a instância na Evolution.");
+}
+
 export async function sendEvolutionAudioMessage(input: SendEvolutionAudioInput) {
   const config = getEvolutionConfig();
+  // Fail before uploading/converting a recording when this instance is offline.
+  await assertEvolutionAudioConnection(config);
   const audio = normalizeOwnedMedia(input.audio);
-  // Evolution 2.3.7 converts browser WebM/MP4 to WhatsApp Ogg/Opus here.
-  const primary = await postEvolutionJson(config.sendAudioUrl, config.apiKey, {
-    number: normalizePhone(input.to), audio, encoding: true,
-  });
-  if (primary.ok) return primary.result;
-  // Never retry a timeout/5xx: the provider may already have accepted the send.
-  if (primary.status !== 415) throw new Error(formatEvolutionError(primary.result, "A Evolution API recusou o envio do áudio."));
-  const form = new FormData();
-  form.set("number", normalizePhone(input.to));
-  const mimeType = input.mimeType?.trim() || "audio/webm";
-  const fileName = resolveAudioFileName(mimeType);
-  const media = createOwnedMediaFormValue(audio, mimeType, fileName);
-  if (media.kind === "url") form.set("audio", media.value);
-  else form.set("file", media.value, fileName);
-  const fallback = await postEvolutionForm(config.sendAudioUrl, config.apiKey, form);
-  if (fallback.ok) return fallback.result;
-  throw new Error(formatEvolutionError(fallback.result, "A Evolution API recusou o envio do áudio."));
+  // Skip conversion only for actual Ogg/Opus bytes, never by MIME/extension alone.
+  // Browser WebM/MP4 still need Evolution's WhatsApp voice-note conversion.
+  const header = /^https?:\/\//i.test(audio) ? Buffer.alloc(0) : Buffer.from(audio.slice(0, 256), "base64");
+  const encoding = !(header.subarray(0, 4).toString("ascii") === "OggS" && header.includes(Buffer.from("OpusHead")));
+  try {
+    const primary = await postEvolutionJson(config.sendAudioUrl, config.apiKey, {
+      number: normalizePhone(input.to), audio, encoding,
+    });
+    if (primary.ok) return primary.result;
+    // Never retry a timeout/5xx: the provider may already have accepted the send.
+    if (primary.status !== 415) throw new Error(formatEvolutionError(primary.result, "A Evolution API recusou o envio do áudio."));
+    const form = new FormData();
+    form.set("number", normalizePhone(input.to));
+    const mimeType = input.mimeType?.trim() || "audio/webm";
+    const fileName = resolveAudioFileName(mimeType);
+    const media = createOwnedMediaFormValue(audio, mimeType, fileName);
+    if (media.kind === "url") form.set("audio", media.value);
+    else form.set("file", media.value, fileName);
+    const fallback = await postEvolutionForm(config.sendAudioUrl, config.apiKey, form);
+    if (fallback.ok) return fallback.result;
+    throw new Error(formatEvolutionError(fallback.result, "A Evolution API recusou o envio do áudio."));
+  } catch (error) {
+    if (error instanceof Error && /connection closed|connection lost|socket (?:is )?closed/i.test(error.message)) throw new Error(audioConnectionMessage(config.instanceName));
+    if (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)) throw new Error("A Evolution não confirmou o envio do áudio a tempo. Confira o histórico antes de tentar novamente para evitar duplicidade.");
+    throw error;
+  }
 }
 
 export async function sendEvolutionMediaMessage(input: SendEvolutionMediaInput) {

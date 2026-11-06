@@ -9,7 +9,7 @@ import { ChatMessageMedia } from "./chat-message-media";
 import type { MessageAttachment } from "@/lib/whatsapp-media";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, MessageCircleMore, Filter, Mic, Paintbrush, Paperclip, Plus, Search, Send, Square, Trash2, UserCheck, Undo2, X } from "lucide-react";
+import { ArrowLeft, MessageCircleMore, Filter, Loader2, Mic, Paintbrush, Paperclip, Plus, Search, Send, Square, Trash2, UserCheck, Undo2, X } from "lucide-react";
 import { AppDialog } from "@/components/ui/app-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -741,7 +741,7 @@ export function ConversationCenter() {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") throw new Error("Seu navegador não permite gravar áudio. Anexe um arquivo de áudio ou use um navegador compatível.");
       stream = await navigator.mediaDevices.getUserMedia({audio:true});
       const mime = ["audio/ogg;codecs=opus","audio/webm;codecs=opus","audio/mp4","audio/webm"].find(type=>MediaRecorder.isTypeSupported(type));
-      const recorder = new MediaRecorder(stream, mime ? {mimeType:mime} : undefined);
+      const recorder = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 32_000 });
       mediaStreamRef.current=stream; mediaRecorderRef.current=recorder; audioChunksRef.current=[];
       recorder.addEventListener("dataavailable",event=>{if(event.data.size>0)audioChunksRef.current.push(event.data);});
       recorder.addEventListener("stop",()=>{
@@ -1138,7 +1138,7 @@ export function ConversationCenter() {
                       className="min-h-11 max-h-32 min-w-0 flex-1 resize-y rounded-xl bg-background py-3"
                     />
                     <Button type="button" size="icon" aria-label={isSending ? "Enviando mensagem" : "Enviar mensagem"} className="shrink-0 rounded-full bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => void sendMessage()} disabled={isSending}>
-                      <Send className="h-4 w-4" />
+                      {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                       <span className="sr-only">{isSending ? "Enviando..." : "Enviar"}</span>
                     </Button>
                   </div>
