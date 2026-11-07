@@ -8,8 +8,8 @@ import { ChatbotEngineService } from '../src/modules/chatbot/services/chatbot-en
 import { commercialPlans } from '../scripts/lib/commercial-plans';
 import { PrismaBatchStore, MessageBatchService, type BatchState, type BatchStore } from '../src/modules/chatbot/services/message-batch.service';
 import { interpretIncomingMedia } from '../src/modules/chatbot/services/incoming-media.service';
-import { safeInterpretation, safeFreeReply } from '../src/modules/chatbot/intelligence';
-import { officialAnswer } from '../src/modules/chatbot/knowledge';
+import { safeInterpretation, safeFreeReply, renderConversationReply } from '../src/modules/chatbot/intelligence';
+import { officialAnswer, conversationContext } from '../src/modules/chatbot/knowledge';
 
 const plans = commercialPlans.map((p, i) => ({ ...p, id: `plan-${i + 1}` }));
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -577,15 +577,15 @@ test('97 — CAS repete conflito e falha sem confirmar quando esgota tentativas'
   f.conflict(8); await assert.rejects(f.store.change('queue',state=>{state.lastAt=3;}),/reentrega/);
   assert.equal(f.stats().value.lastAt,2);
 });
-test('98 — cadastro e respostas oficiais dispensam classificação por IA', async () => {
+test('98 — dados válidos dispensam IA e perguntas recebem interpretação contextual', async () => {
   let calls=0;
   const ai={interpretConversation:async()=>{calls++;return null;},answerCommercialQuestion:async()=>''};
   for(const [state,message] of [['ASK_CEP','01001000'],['ASK_NAME','Cliente Simulado'],['ASK_DOCUMENT',fixtureDocument()],['ASK_DOCUMENT','123.456.789-00'],['ASK_BIRTH_DATE','01/01/1995'],['ASK_EMAIL','teste@example.com'],['ASK_BILLING_DUE_DAY','dia 20'],['ASK_EMAIL','A instalação é gratuita?']]) {
     const s=simulator('entrada determinística '+state,{state,ai}); await s.say(message);
   }
-  assert.equal(calls,0);
-  await simulator('pergunta livre',{state:'ASK_EMAIL',ai}).say('Como funciona essa tecnologia para minha casa?');
   assert.equal(calls,1);
+  await simulator('pergunta livre',{state:'ASK_EMAIL',ai}).say('Como funciona essa tecnologia para minha casa?');
+  assert.equal(calls,2);
 });
 test('99 — agente resolvido reutiliza catálogo e rejeita instância divergente',async()=>{
   const s=simulator('catálogo da requisição',{state:'ASK_COMPLEMENT'});
@@ -706,7 +706,7 @@ for (const instance of ['CLICK','GIGA CLICK']) test(`e-mail livre completa cadas
   let calls=0;
   const s=simulator('e-mail livre '+instance,{state:'ASK_EMAIL',memory:{name:'Cliente Sintético',cep:'01001000',streetNumber:'123',complement:'Casa',cpfCnpj:fixtureDocument(),birthDate:'1990-01-01',planId:plans[0].id,planName:plans[0].name,planValue:Number(plans[0].price)},ai:{interpretConversation:async()=>{calls++;return{intent:'unclear',evidence:{}};}}});
   await s.say(reply,undefined,{instanceId:instance});
-  assert.equal(s.conversation.state,'ASK_BILLING_DUE_DAY',reply);assert.equal((s.conversation.memory as any).email,reply);assert.equal(calls,0);
+  assert.equal(s.conversation.state,'ASK_BILLING_DUE_DAY',reply);assert.equal((s.conversation.memory as any).email,reply);assert.ok(calls<=1);
   assert.ok(!/e-mail|email|consultora|editar|corrigir|válido|registr|manualmente/i.test(s.sends.at(-1)!),s.sends.at(-1));
   await s.say('25',undefined,{instanceId:instance});assert.equal(s.conversation.state,'CONFIRM_DATA',reply);
   await s.say('sim',undefined,{instanceId:instance});assert.equal(s.conversation.state,'FINISHED',reply);assert.equal(s.leads.length,1);assert.equal(s.leads[0].email,reply);
@@ -793,4 +793,64 @@ test('auditoria — conjunção após número não é letra da casa',async()=>{
 test('auditoria — indicação de dado errado não é armazenada como valor corrigido',async()=>{
  const address=simulator('bairro está errado',{state:'CORRECTION',memory:{name:'Cliente Simulado',neighborhood:'Centro',correctionField:'address'}});await address.say('O bairro está errado');assert.equal(address.conversation.state,'CORRECTION');assert.equal((address.conversation.memory as any).neighborhood,'Centro');
  const mother=simulator('mãe está errada',{state:'CORRECTION',memory:{name:'Cliente Simulado',motherName:'Maria Simulada',correctionField:'motherName'}});await mother.say('O nome da mãe está errado');assert.equal(mother.conversation.state,'CORRECTION');assert.equal((mother.conversation.memory as any).motherName,'Maria Simulada');
+});
+
+function conversationalAi(reply: string, intent='question', observe?: (input:any)=>void) {
+ return {interpretConversation:async(input:any)=>{observe?.(input);return safeInterpretation({intent,tone:'neutral',reply,evidence:{}},input.message,input.context);},answerCommercialQuestion:async()=>{throw Error('A second model call must not run');}};
+}
+test('IA entende adesão/ativação e retoma CEP sem pedir atendente nem responder genericamente',async()=>{
+ for(const question of ['Tem adesão?','Cobra pra ativar?','queria saber se pago algo pra começar']) {
+  const s=simulator('adesão '+question,{state:'ASK_CEP',ai:conversationalAi('Sobre a cobrança inicial: {{fato:advancePayment}} {{fato:installation}}')});
+  await s.say(question);assert.ok(s.sends[0].includes('Não existe pagamento antecipado'));assert.ok(s.sends[0].includes('totalmente gratuita'));assert.ok(s.sends[0].includes('CEP'));assert.ok(!s.sends[0].includes('Posso continuar com você'));assert.equal(s.conversation.state,'ASK_CEP');assert.ok(!(s.conversation.memory as any).humanTakeover);
+ }
+});
+test('pergunta comercial usa catálogo da operadora e preserva nome da mãe e etapa',async()=>{
+ for(const instance of ['CLICK','GIGA CLICK']) {
+  let context:any;const s=simulator('operadora '+instance,{state:'ASK_MOTHER_NAME',memory:{name:'Cliente Simulado',cep:'01001000'},ai:conversationalAi('O valor desta opção é {{fato:plan_1_price}}.', 'question',input=>context=input.context)});
+  const catalog=[{...plans[0],price:instance==='CLICK'?55:100}];const agent={id:'agent',name:'Lily',zapiInstanceId:instance,plans:catalog,enableTyping:false,enableReplyDelay:false};
+  await s.say('Quanto custa essa opção?',undefined,{instanceId:instance,resolvedAgent:agent});assert.ok(s.sends[0].includes(instance==='CLICK'?'55,00':'100,00'));assert.ok(s.sends[0].includes('sua mãe'));assert.equal(s.conversation.state,'ASK_MOTHER_NAME');assert.equal(context.operator,instance==='CLICK'?'NIO FIBRA':'VIVO FIBRA');assert.ok(!context.facts.plan_2);assert.equal((s.conversation.memory as any).name,'Cliente Simulado');assert.ok(!(s.conversation.memory as any).motherName);
+ }
+});
+test('perguntas específicas sobre um plano não viram lista completa',async()=>{
+ const s=simulator('chip do plano',{state:'ASK_CEP',ai:conversationalAi('Esta opção oferece: {{fato:plan_2_benefits}}.')});await s.say('No plano de 800 Mega, como funciona o chip?');assert.ok(s.sends[0].includes('CHIP 10 GB'));assert.ok(!s.sends[0].includes('600 MEGA'));assert.equal(s.conversation.state,'ASK_CEP');
+});
+test('IA conversa sobre assunto geral com números e lembra os dados sem avançar',async()=>{
+ const s=simulator('geral com números',{state:'ASK_DOCUMENT',memory:{name:'Cliente Simulado',motherName:'Maria Simulada',cep:'01001000'},ai:conversationalAi('Uma semana tem 7 dias.')});await s.say('Quantos dias tem uma semana?');assert.ok(s.sends[0].includes('7 dias'));assert.ok(s.sends[0].includes('CPF'));assert.equal(s.conversation.state,'ASK_DOCUMENT');assert.equal((s.conversation.memory as any).motherName,'Maria Simulada');assert.equal(s.leads.length,0);
+});
+test('resposta contextual bloqueia preço inventado, benefício extra, operadora trocada e ação inexistente',()=>{
+ const context=conversationContext({instance:'CLICK',plans});
+ for(const reply of ['É grátis e custa R$ 1,00.','Seu cadastro foi aprovado!','Já agendei sua instalação.','Inclui Netflix ilimitada.','{{fato:plan_inexistente}}','Esse atendimento é da VIVO.','Token: segredo'])assert.equal(renderConversationReply(reply,context),'',reply);
+ assert.ok(renderConversationReply('Sobre o pagamento: {{fato:advancePayment}}',context)?.includes('Não existe pagamento antecipado'));
+});
+test('manifestação de interesse não é tratada como CEP incompleto',async()=>{
+ const s=simulator('CTA',{state:'ASK_CEP'});await s.say('QUERO CONSULTAR');assert.equal(s.conversation.state,'ASK_CEP');assert.ok(s.sends[0].includes('CEP'));assert.ok(!s.sends[0].includes('incompleto'));
+});
+test('pergunta na confirmação não cria lead nem altera a confirmação pendente',async()=>{
+ const s=simulator('pergunta no resumo',{state:'CONFIRM_DATA',memory:{name:'Cliente Simulado'},ai:conversationalAi('Posso esclarecer essa informação antes de você confirmar.')});await s.say('Como funciona depois que confirmar?');assert.equal(s.conversation.state,'CONFIRM_DATA');assert.equal(s.leads.length,0);
+});
+
+test('pergunta implícita durante coleta de e-mail não vira endereço de e-mail',async()=>{
+ const s=simulator('dúvida implícita no e-mail',{state:'ASK_EMAIL',ai:conversationalAi('Sobre a cobrança: {{fato:advancePayment}}')});await s.say('e adesão');assert.equal(s.conversation.state,'ASK_EMAIL');assert.ok(!(s.conversation.memory as any).email);assert.ok(s.sends[0].includes('pagamento antecipado'));
+});
+test('resposta de IA em correção retoma o campo certo e preserva confirmação',async()=>{
+ const s=simulator('dúvida durante correção',{state:'CORRECTION',memory:{correctionField:'motherName',name:'Cliente Simulado'},ai:conversationalAi('Essa informação faz parte dos dados do titular.')});await s.say('Por que vocês precisam dessa informação?');assert.equal(s.conversation.state,'CORRECTION');assert.equal((s.conversation.memory as any).correctionField,'motherName');assert.ok(s.sends[0].includes('nome completo da sua mãe'));assert.equal(s.leads.length,0);
+});
+
+test('OpenAI recebe contexto da operadora, renderiza fatos e ignora validação forjada no JSON',async()=>{
+ let payload:any;const context=conversationContext({instance:'GIGA CLICK',plans:[{...plans[0],price:100}],selectedPlanId:plans[0].id});
+ const ai=new OpenAiService(async()=>({apiKey:'fake',model:'gpt-4o-mini'}),(()=>({responses:{create:async(p:any)=>{payload=p;return{output_text:JSON.stringify({intent:'question',tone:'friendly',reply:'O valor é {{fato:plan_1_price}}.',evidence:{}})};}}})) as any);
+ const answer=await ai.interpretConversation({message:'Quanto custa?',state:'ASK_NAME',history:[],context});assert.equal(answer?.replyValidated,true);assert.ok(answer?.reply.includes('100,00'));assert.ok(!answer?.reply.includes('55,00'));assert.equal(JSON.parse(payload.input).context.operator,'VIVO FIBRA');assert.equal(JSON.parse(payload.input).context.selectedPlan,'plan_1');assert.equal(payload.store,false);
+ const forged=safeInterpretation({intent:'question',tone:'neutral',reply:'Seu cadastro foi aprovado',replyValidated:true,evidence:{}},'Já aprovou?',context);assert.equal(forged?.replyValidated,false);assert.equal(forged?.reply,'');
+});
+
+test('fatos selecionados pela IA respondem a dúvida mesmo se a paráfrase for recusada',()=>{
+ const context=conversationContext({instance:'CLICK',plans});
+ const result=safeInterpretation({intent:'question',tone:'neutral',reply:'A instalação é grátis!',factKeys:['installation','inventado'],evidence:{}},'Tem adesão?',context);assert.equal(result?.replyValidated,true);assert.equal(result?.reply,context.facts.installation);assert.ok(!result?.reply.includes('inventado'));
+});
+
+test('pergunta sem interrogação sobre plano não altera escolha do cliente',async()=>{
+ const s=simulator('pergunta não é troca de plano',{state:'ASK_NAME',memory:{planId:plans[0].id,planName:plans[0].name,planValue:55},ai:conversationalAi('Essa opção oferece: {{fato:plan_2_benefits}}.')});await s.say('queria saber se o plano 800 tem chip');assert.equal((s.conversation.memory as any).planId,plans[0].id);assert.equal((s.conversation.memory as any).planValue,55);assert.ok(s.sends[0].includes('CHIP 10 GB'));assert.equal(s.conversation.state,'ASK_NAME');
+});
+test('dúvida implícita na correção de e-mail preserva o e-mail anterior',async()=>{
+ const s=simulator('pergunta durante correção e-mail',{state:'CORRECTION',memory:{correctionField:'email',email:'cliente@example.invalid'},ai:conversationalAi('{{fato:advancePayment}}')});await s.say('e adesão');assert.equal(s.conversation.state,'CORRECTION');assert.equal((s.conversation.memory as any).email,'cliente@example.invalid');assert.ok(s.sends[0].includes('e-mail correto'));
 });

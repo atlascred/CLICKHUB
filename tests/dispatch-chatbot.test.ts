@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { DispatchChatbotService } from '../src/modules/envio-em-massa/services/dispatch-chatbot.service';
 import { DispatchConversationsService } from '../src/modules/envio-em-massa/services/dispatch-conversations.service';
 import { setDispatchBotPaused } from '../src/modules/envio-em-massa/services/dispatch-bot-control';
+import { safeInterpretation } from '../src/modules/chatbot/intelligence';
 import { commercialPlans } from '../scripts/lib/commercial-plans';
 const phone='5511900000000',phoneId='123';
 const copy=<T>(v:T):T=>structuredClone(v);
@@ -95,4 +96,10 @@ test('typing inicia antes de esperar a fila e o preparo da resposta',async()=>{
  const work=f.say('oi','early-typing');await started;
  assert.deepEqual(f.typings,['early-typing']);assert.equal(f.sends.length,0);
  release();await work;assert.equal(f.sends.length,1);
+});
+
+test('bot do disparo oficial responde dúvida não prevista pela IA e preserva etapa NIO',async()=>{
+ const f=fixture();await f.say('oi');
+ (f.service as any).ai={interpretConversation:async(input:any)=>{assert.equal(input.context.operator,'NIO FIBRA');return safeInterpretation({intent:'question',tone:'neutral',reply:'Sobre a adesão: {{fato:advancePayment}} {{fato:installation}}',evidence:{}},input.message,input.context);}};
+ await f.say('Tem adesão?');assert.ok(f.sends.at(-1)!.includes('totalmente gratuita'));assert.ok(f.sends.at(-1)!.includes('CEP'));assert.equal(f.threads[0].memory.nioBotState,'ASK_CEP');assert.ok(!f.threads[0].memory.nioBotMemory.humanTakeover);assert.equal(f.leads.length,0);
 });

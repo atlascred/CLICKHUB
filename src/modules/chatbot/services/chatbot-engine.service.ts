@@ -10,7 +10,7 @@ import { currentEvolutionInstance, scopedEvolutionId } from "@/services/evolutio
 import { checkMetaWhatsAppNumber, markMetaMessageAsRead, sendMetaTextMessage } from "@/services/meta-whatsapp";
 import { ZapiService } from "@/services/zapi/zapi.service";
 import { onlyDigits } from "@/utils/mask";
-import { commercialKnowledge, officialAnswer } from "@/modules/chatbot/knowledge";
+import { conversationContext, officialAnswer } from "@/modules/chatbot/knowledge";
 import { extractLabeledName, fullName, isAutomaticReply, hasInjection, isExplicitConfirmation, isExplicitRefusal, safeFreeReply, type ConversationInterpretation } from "@/modules/chatbot/intelligence";
 
 const VALID_BILLING_DAYS = [5, 8, 10, 15, 20, 25];
@@ -170,7 +170,13 @@ export class ChatbotEngineService {
       try {
         interpretation = await this.openAiService.interpretConversation({
           message: input.message, state: conversation.state,
-          history: (conversation.messages ?? []).slice(0, 6).reverse().map(m => ({
+          context: {
+            ...conversationContext({ instance: agent?.zapiInstanceId, plans: await this.getPlans(agent), selectedPlanId: currentMemory.planId }),
+            collectedFields: Object.entries(currentMemory).filter(([key, value]) => ["name", "motherName", "cep", "streetNumber", "complement", "cpfCnpj", "birthDate", "email", "billingDueDay", "planId"].includes(key) && value).map(([key]) => key),
+            nextQuestion: resumeConversationPrompt(conversation.state, currentMemory),
+            additionalRules: formatAgentRules(agent?.rules),
+          },
+          history: (conversation.messages ?? []).slice(0, 8).reverse().map(m => ({
             role: m.direction === "inbound" ? "user" : "assistant",
             text: m.body.replace(/\b\d[\d.\-/]{6,}\d\b/g, "[dado protegido]").replace(/\S+@\S+/g, "[e-mail]").slice(0, 400),
           })),
@@ -328,7 +334,7 @@ export class ChatbotEngineService {
     const text = extractedValueForState(input.state, input.extractedData) ?? originalText;
     if (!/^\[(?:Áudio|Imagem|Documento|Arquivo)/i.test(text)) memory.mediaFailureCount = 0;
     const firstName = getFirstName(memory.name);
-    applyParsedCustomerData(memory, text, input.state);
+    applyParsedCustomerData(memory, text, ["question", "smalltalk"].includes(input.interpretation?.intent ?? "") ? "EARLY_DATA" : input.state);
     const evidence = input.interpretation?.evidence ?? {};
     for (const [key, source] of Object.entries(evidence)) if (key !== "motherName" && !(motherContext && key === "name")) applyParsedCustomerData(memory, source, "EARLY_DATA");
     applyValidatedExtractedData(memory, { fullName: motherContext ? undefined : evidence.name, motherName: evidence.motherName, cep: evidence.cep, cpf: evidence.document,
@@ -344,7 +350,7 @@ export class ChatbotEngineService {
     const mentionedPlan = selectPlan(evidence.plan || text, plans);
     const explicitPlan = (Boolean(evidence.plan) || /(?:trocar|mudar|alterar|prefiro|quero|plano|ficar com|opcao)/i.test(normalizeText(text)))
       && /\b(600|700|800|1000|1\s*giga|seiscentos|setecentos|oitocentos|disney)\b/i.test(normalizeText(text))
-      && !text.includes("?") && !/\bnao\b/.test(normalizeText(text));
+      && !looksLikeQuestion(text) && input.interpretation?.intent !== "question" && !/\bnao\b/.test(normalizeText(text));
     const conflict = conflictingFields(originalText, input.state === "ASK_EMAIL" && isEmailAnswer(text));
     if (conflict) return { state: input.state, memory: { ...input.memory }, reply: `${conflict}\n\n${promptForState(input.state, firstName)}` };
     if (hasInjection(originalText)) return { state: input.state, memory: { ...input.memory }, reply: `Posso ajudar, mas não posso alterar condições comerciais nem confirmar ações que não foram realizadas.\n\n${promptForState(input.state, firstName)}` };
@@ -392,7 +398,7 @@ export class ChatbotEngineService {
       if (memory.mediaFailureCount >= 3) return { state: input.state, memory: { ...memory, humanTakeover: true, takeoverAt: new Date().toISOString(), takeoverReason: "Falhas repetidas ao interpretar mídia." }, reply: "Não consegui identificar o conteúdo com segurança. Vou sinalizar para uma consultora humana continuar seu atendimento por aqui. 😊" };
       return { state: input.state, memory, reply: `Não consegui identificar o conteúdo com segurança. Pode escrever a informação?\n\n${promptForState(input.state, firstName)}` };
     }
-    if (input.state === "ASK_EMAIL" && isEmailAnswer(text)) {
+    if (input.state === "ASK_EMAIL" && isEmailAnswer(text) && !["question", "smalltalk"].includes(input.interpretation?.intent ?? "")) {
       // Preserve what the customer supplied for the operator; never invent an address.
       memory.email = text;
       memory.emailCollected = true;
@@ -405,8 +411,17 @@ export class ChatbotEngineService {
         return { state: input.state, memory, reply: "Para evitar que você precise repetir, vou sinalizar este atendimento para uma consultora humana. Mantive os dados já informados." };
       }
     }
+    const criticalAnswer = input.state === "CONFIRM_DATA" && (isPositive(text) || isNegative(text));
+    const conversationalReply = input.interpretation?.replyValidated ? input.interpretation.reply : safeFreeReply(input.interpretation?.reply ?? "", input.message);
+    if (!criticalAnswer && conversationalReply && ["question", "smalltalk"].includes(input.interpretation?.intent ?? "")) {
+      memory.confusionCount = 0;
+      return { state: input.state, memory, reply: `${conversationalReply}\n\n${resumeConversationPrompt(input.state, memory)}` };
+    }
     const official = officialAnswer(text);
     if (official) return { state: input.state, memory, reply: `${official}\n\n${promptForState(input.state, firstName)}` };
+    if (/^(?:quero consultar|quero saber mais|tenho interesse)$/.test(normalizeText(text))) {
+      return { state: input.state, memory, reply: `Claro! Vamos continuar sua consulta.\n\n${resumeConversationPrompt(input.state, memory)}` };
+    }
     if (/voltei|continuar|onde paramos|retomar/.test(normalizeText(text))) {
       return { state: input.state, memory, reply: `Que bom ter você de volta! Mantive os dados já informados.\n\n${promptForState(input.state, firstName)}` };
     }
@@ -426,7 +441,7 @@ export class ChatbotEngineService {
       };
     }
 
-    if (asksForPlanList(text) || isPlanQuestion(text)) {
+    if (asksForPlanList(text) || (!input.interpretation && isPlanQuestion(text))) {
       const plans = await this.getPlans(input.agent);
       return {
         state: input.state,
@@ -435,7 +450,6 @@ export class ChatbotEngineService {
       };
     }
 
-    const criticalAnswer = input.state === "CONFIRM_DATA" && (isPositive(text) || isNegative(text));
     if (!criticalAnswer && (shouldAnswerOutsideFlow(text, input.state) || ["question", "smalltalk", "unclear"].includes(input.interpretation?.intent ?? "") || /^(kkk+|rsrs|eae|e ai|opa|salve|nao sei|sei la|conte uma piada)/.test(normalizeText(text)))) {
       if (input.state === "ASK_DOCUMENT" && asksWhyCpf(text)) {
         return {
@@ -444,17 +458,11 @@ export class ChatbotEngineService {
           reply: "O CPF é necessário para realizar a análise e o cadastro da contratação. 🔐\nEle faz parte dos dados necessários para encaminharmos sua solicitação.\n\nDepois disso, continuamos normalmente de onde paramos. 😊\nPode me informar seu CPF?",
         };
       }
-      const aiReply = safeFreeReply(input.interpretation?.reply ?? "", input.message);
-      const answer = aiReply || await this.answerOutsideFlow({
-        message: text,
-        state: input.state,
-        agent: input.agent,
-        customerName: memory.name,
-      });
+      const answer = conversationalReply || "Não consegui esclarecer essa dúvida com segurança agora. Se quiser, uma consultora pode verificar essa informação para você.";
       return {
         state: input.state,
         memory,
-        reply: `${answer}\n\n${promptForState(input.state, firstName)}`,
+        reply: `${answer}\n\n${resumeConversationPrompt(input.state, memory)}`,
       };
     }
 
@@ -577,7 +585,7 @@ export class ChatbotEngineService {
 
       if (!selectedPlan) {
         if (isPlanRefusal(text)) {
-          return this.handlePlanObjection({ text, state: "CHOOSE_PLAN", memory, plans, agent: input.agent });
+          return this.handlePlanObjection({ text, state: "CHOOSE_PLAN", memory, plans, agent: input.agent, interpretation: input.interpretation });
         }
         return {
           state: "CHOOSE_PLAN",
@@ -787,6 +795,7 @@ export class ChatbotEngineService {
   }
 
   private async handlePlanObjection(input: {
+    interpretation?: ConversationInterpretation | null;
     text: string;
     state: string;
     memory: ChatMemory;
@@ -803,18 +812,7 @@ export class ChatbotEngineService {
       };
     }
 
-    const answer = await this.answerPlanQuestion({
-      customerMessage: `O cliente apresentou objeção. Tentativa ${memory.objectionCount} de 3: ${input.text}`,
-      customerName: memory.name,
-      plans: input.plans.map((plan, index) => ({
-        order: index + 1,
-        name: plan.name,
-        speed: plan.speed,
-        price: Number(plan.price),
-        description: plan.description,
-      })),
-      agent: input.agent,
-    });
+    const answer = input.interpretation?.replyValidated ? input.interpretation.reply : safeFreeReply(input.interpretation?.reply ?? "", input.text);
 
     return {
       state: input.state,
@@ -908,63 +906,7 @@ export class ChatbotEngineService {
     return corrected;
   }
 
-  private async answerPlanQuestion(input: {
-    customerMessage: string;
-    customerName?: string;
-    plans: Array<{ order: number; name: string; speed: string; price: number; description: string | null }>;
-    agent: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>;
-  }) {
-    try {
-      const planLines = input.plans
-        .map((plan) => `${plan.order}. ${plan.name} ${plan.speed} - ${formatMoney(plan.price)}${plan.description ? ` - ${plan.description}` : ""}`)
-        .join("\n");
 
-      return await this.openAiService.answerCommercialQuestion(
-        [
-          `Voce e ${input.agent?.name ?? "Lily"}, consultora comercial de planos de internet fibra em um atendimento pelo WhatsApp.`,
-          `Personalidade: ${input.agent?.personality ?? "Vendedora humana, simpatica, persuasiva e objetiva."}`,
-          `Regras personalizadas:\n${formatAgentRules(input.agent?.rules)}`,
-          "Responda em portugues do Brasil, de forma breve, vendedora e natural.",
-          "Nunca invente preco, cobertura, operadora disponivel, prazo, taxa, fidelidade, promocao ou plano. Use somente os dados listados.",
-          "Use no maximo um emoji.",
-          "Depois de responder, conduza o cliente para escolher um plano.",
-          `Cliente: ${input.customerName ?? "cliente"}`,
-          `Planos disponiveis:\n${planLines || "Valores ainda nao cadastrados."}`,
-          `Mensagem do cliente: ${input.customerMessage}`,
-        ].join("\n\n"),
-      );
-    } catch {
-      return "";
-    }
-  }
-
-  private async answerOutsideFlow(input: {
-    message: string;
-    state: string;
-    customerName?: string;
-    agent: Awaited<ReturnType<ChatbotRepository["getAgentByInstance"]>>;
-  }) {
-    try {
-      const reply = await this.openAiService.answerCommercialQuestion(
-        [
-          `Voce e ${input.agent?.name ?? "Lily"}, assistente virtual comercial de planos de internet fibra.`,
-          `Personalidade: ${input.agent?.personality ?? "Vendedora humana, cordial e objetiva."}`,
-          `Regras:\n${formatAgentRules(input.agent?.rules)}`,
-          `O funil esta na etapa ${input.state}. Responda a duvida sem pular etapa.`,
-          "Pode conversar sobre assuntos gerais com respeito e segurança; depois retome o cadastro.",
-          "Nunca confirme cobertura, disponibilidade tecnica, prazo, taxa, fidelidade ou promocao se essa informacao nao estiver cadastrada.",
-          "Se perguntarem, explique que é a assistente virtual da Click Hubnet.",
-          "Use no maximo um emoji.",
-          `Cliente: ${input.customerName ?? "cliente"}`,
-          `Condições oficiais: ${JSON.stringify(commercialKnowledge)}`,
-          `Pergunta: ${input.message}`,
-        ].join("\n\n"),
-      );
-      return safeFreeReply(reply, input.message) || "Posso continuar com você. Se preferir, também pode pedir uma atendente.";
-    } catch {
-      return "Posso te orientar sobre os planos e a solicitação de contratação. 😊";
-    }
-  }
 }
 
 type NextBotResponse = {
@@ -1840,7 +1782,8 @@ function shouldAnswerOutsideFlow(text: string, state: string) {
 
 function looksLikeQuestion(text: string) {
   const normalized = normalizeText(text);
-  return text.includes("?") || /^(como|qual|quais|quanto|quando|onde|por que|porque|tem|voce|voces|pode|posso)\b/.test(normalized);
+  return text.includes("?") || /^(como|qual|quais|quanto|quando|onde|por que|porque|tem|voce|voces|pode|posso|sera|precisa|cobram)\b/.test(normalized)
+    || /\b(?:queria saber|gostaria de saber|me explica|me explique|me tira uma duvida|tenho uma duvida|duvida sobre)\b/.test(normalized);
 }
 
 function asksWhyCpf(text: string) {
@@ -1851,6 +1794,9 @@ function asksWhyCpf(text: string) {
 function promptForState(state: string, firstName?: string) {
   const name = firstName ? `${firstName}, ` : "";
   const prompts: Record<string, string> = {
+    START: "Para começar, pode me informar o CEP da instalação, por favor? 📍",
+    CONFIRM_DATA: "Confirma os dados? Responda SIM ou NÃO.",
+    CORRECTION: "Qual dado quer corrigir: 1 Nome, 2 CPF, 3 Nascimento, 4 E-mail, 5 Endereço, 6 Vencimento, 7 Plano ou 8 Nome da mãe?",
     ASK_CEP: "Para começar, pode me informar o CEP da instalação, por favor? 📍",
     ASK_STREET_NUMBER: "Me informe o número da residência.",
     ASK_COMPLEMENT: "Agora me informe se há complemento para o endereço.",
@@ -1864,6 +1810,11 @@ function promptForState(state: string, firstName?: string) {
     CHOOSE_PLAN: "Qual plano você gostaria de escolher?",
   };
   return prompts[state] ?? "Me envie a próxima informação para continuarmos.";
+}
+
+function resumeConversationPrompt(state: string, memory: ChatMemory) {
+  if (state === "CORRECTION" && memory.correctionField) return correctionPrompt(memory.correctionField);
+  return promptForState(state, getFirstName(memory.name));
 }
 
 function callResumePrompt(
@@ -2145,9 +2096,9 @@ function applyBatchData(memory: ChatMemory, parts: string[], state: string, plan
 /** Fixed-flow inputs must not wait for model classification or a settings lookup. */
 function needsConversationalInterpretation(text: string, state: string, memory: ChatMemory, plans: PlanCandidate[]) {
   const value = text.trim();
-  if (state === "ASK_EMAIL" && isEmailAnswer(value)) return false;
+  if (state === "ASK_EMAIL" && isEmailAnswer(value) && (parseEmail(value) || /@|e-?mail|gmail|hotmail|outlook|arroba|^n[aã]o (?:sei|tenho|lembro|consigo)|^\?+$/i.test(value))) return false;
   if (value.length <= 3 || hasInjection(value)) return false;
-  if (officialAnswer(value) || isRestartRequest(value) || isHandoffRequest(value) || asksForPlanRecommendation(value) || asksForPlanList(value)) return false;
+  if (isRestartRequest(value) || isHandoffRequest(value) || asksForPlanRecommendation(value) || asksForPlanList(value)) return false;
   if (looksLikeQuestion(value)) return true;
   if (/^(oi|ola|bom dia|boa tarde|boa noite|tudo bem)[.!\s]*$/.test(normalizeText(value))) return false;
   if (isExplicitConfirmation(value) || isExplicitRefusal(value)) return false;
@@ -2160,7 +2111,7 @@ function needsConversationalInterpretation(text: string, state: string, memory: 
   if (state === "ASK_BIRTH_DATE" && (parseBirthDate(value) || /^[\d/.\-\s]+$/.test(value))) return false;
   if (state === "ASK_EMAIL" && (parseEmail(value) || value.includes("@"))) return false;
   if (state === "ASK_BILLING_DUE_DAY" && parseBillingDay(value)) return false;
-  if (state === "CORRECTION" && (isCorrectionChoiceOnly(value) || (memory.correctionField && validCorrection(memory.correctionField, value, plans)))) return false;
+  if (state === "CORRECTION" && (isCorrectionChoiceOnly(value) || (memory.correctionField && validCorrection(memory.correctionField, value, plans) && (memory.correctionField !== "email" || /@|e-?mail|gmail|hotmail|outlook|arroba|^n[aã]o (?:sei|tenho|lembro|consigo)|^\?+$/i.test(value))))) return false;
   return true;
 }
 

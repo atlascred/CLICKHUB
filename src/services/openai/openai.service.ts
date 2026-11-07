@@ -1,14 +1,14 @@
 import OpenAI from "openai";
 import { getOpenAiRuntimeConfig } from "@/lib/integration-config";
 import { safeInterpretation } from "@/modules/chatbot/intelligence";
-import { commercialKnowledge } from "@/modules/chatbot/knowledge";
+import { commercialKnowledge, type ConversationContext } from "@/modules/chatbot/knowledge";
 
 export class OpenAiService {
   constructor(
     private readonly configProvider = getOpenAiRuntimeConfig,
     private readonly clientFactory: (options: { apiKey: string; timeout: number; maxRetries?: number }) => OpenAI = options => new OpenAI(options),
   ) {}
-  async interpretConversation(input: { message: string; state: string; history: Array<{ role: string; text: string }> }) {
+  async interpretConversation(input: { message: string; state: string; history: Array<{ role: string; text: string }>; context?: ConversationContext }) {
     try {
       const config = await this.configProvider();
       if (!config.apiKey) return null;
@@ -24,22 +24,31 @@ export class OpenAiService {
           "Separe o nome do titular (name) do nome da mãe (motherName). Não troque os dois.",
           "Classifique a mensagem e extraia SOMENTE trechos literais como evidências. Ausência ou ambiguidade = null.",
           "Não confirme cadastro, envio, atendimento assumido ou contratação. O backend controla todas as ações.",
-          "reply: resposta breve ao assunto ou acolhimento emocional, sem preços, promessas comerciais ou pedir novos dados.",
+          "Interprete a intenção pelo significado, não por palavras-chave. Considere perguntas implícitas, abreviações, erros de digitação e o histórico (por exemplo: 'e adesão?', 'cobram pra começar', 'tem custo pra ativar').",
+          "reply: responda diretamente à dúvida em 1 a 4 frases, como uma conversa natural. Não use respostas genéricas como 'posso continuar com você' no lugar de esclarecer a pergunta.",
+          "factKeys: selecione as chaves dos fatos fornecidos que respondem à dúvida; use [] para dados, assuntos gerais ou condições desconhecidas. Não selecione fatos sem relação com a pergunta.",
+          "Para qualquer preço, benefício ou condição comercial, use SOMENTE os marcadores {{fato:chave}} das informações fornecidas em context.facts. O backend substitui o marcador pelo texto verdadeiro. Não reescreva valores, gratuidade, taxas ou benefícios fora desses marcadores.",
+          "Exemplo: para cobrança de adesão/ativação, esclareça o que está confirmado: {{fato:advancePayment}} {{fato:installation}}. Não afirme inexistência de qualquer outra taxa não documentada.",
+          "Para comparar/explicar planos, use os fatos plan_1, plan_1_price, plan_1_benefits e equivalentes, somente da operadora atual. Use selectedPlan para perguntas como 'esse plano inclui o quê?'.",
+          "Pode explicar conceitos e assuntos gerais com seu conhecimento, sem fingir navegação, ações externas ou informações em tempo real. Se não souber, diga isso com clareza.",
+          "Se uma condição ou benefício não estiver confirmado, explique essa limitação e ofereça verificar com a equipe, sem afirmar que já fez transferência. Uma dúvida não é um pedido de atendente.",
+          "Seja cordial sem repetir apresentação, ofertas, listas inteiras ou o nome da pessoa a cada mensagem. Não trate dúvida como dado de cadastro nem uma manifestação de interesse como CEP inválido.",
           "Não reescreva a pergunta da etapa: o backend acrescentará a pergunta correta. Não classifique intenção de compra ou prioridade.",
-          `Condições oficiais, sem extrapolar: ${JSON.stringify(commercialKnowledge)}`,
+          `Condições oficiais de referência, sem extrapolar: ${JSON.stringify(input.context?.facts || commercialKnowledge)}`,
         ].join("\n"),
-        input: JSON.stringify({ state: input.state, history: input.history.slice(-6), message: input.message.slice(0, 4000) }),
+        input: JSON.stringify({ state: input.state, history: input.history.slice(-8), context: input.context, message: input.message.slice(0, 4000) }),
         text: { format: { type: "json_schema", name: "lily_interpretation", strict: true, schema: {
           type: "object", additionalProperties: false,
           properties: {
             intent: { type: "string", enum: ["data", "question", "smalltalk", "recommendation", "handoff", "unclear"] },
             tone: { type: "string", enum: ["neutral", "frustrated", "uncertain", "friendly"] },
             reply: { type: "string" },
+            factKeys: { type: "array", items: { type: "string", enum: Object.keys(input.context?.facts || commercialKnowledge) } },
             evidence: { type: "object", additionalProperties: false, properties: Object.fromEntries(fields.map(key => [key, { type: ["string", "null"] }])), required: fields },
-          }, required: ["intent", "tone", "reply", "evidence"],
+          }, required: ["intent", "tone", "reply", "factKeys", "evidence"],
         } } },
       });
-      return safeInterpretation(JSON.parse(response.output_text), input.message);
+      return safeInterpretation(JSON.parse(response.output_text), input.message, input.context);
     } catch {
       return null;
     }

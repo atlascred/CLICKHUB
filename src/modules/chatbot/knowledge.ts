@@ -29,3 +29,31 @@ export function officialAnswer(text: string): string | undefined {
     return "Essa condição ou benefício não está confirmado no catálogo. Posso encaminhar para uma consultora, sem prometer uma condição que não esteja cadastrada.";
   }
 }
+
+export type ConversationContext = {
+  operator: string;
+  facts: Record<string, string>;
+  selectedPlan?: string;
+  collectedFields?: string[];
+  nextQuestion?: string;
+  additionalRules?: string;
+};
+
+/** Only this agent's catalog enters the model context. No cross-operator fallback. */
+export function conversationContext(input: {
+  instance?: string | null;
+  plans: Array<{ id: string; name: string; speed: string; price: unknown; description?: string | null }>;
+  selectedPlanId?: string;
+}): ConversationContext {
+  const operator = input.instance === "CLICK" ? "NIO FIBRA" : input.instance === "GIGA CLICK" ? "VIVO FIBRA" : "Click Hubnet";
+  const facts: Record<string, string> = { ...commercialKnowledge, operator: `Este atendimento é da ${operator}.` };
+  input.plans.forEach((plan, index) => {
+    const key = `plan_${index + 1}`;
+    const price = Number(plan.price).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    facts[key] = `${plan.name} — ${price}/mês. ${plan.description || plan.speed}`;
+    facts[`${key}_price`] = `${price}/mês`;
+    facts[`${key}_benefits`] = plan.description || plan.speed;
+  });
+  const selected = input.plans.findIndex(plan => plan.id === input.selectedPlanId);
+  return { operator, facts, ...(selected >= 0 ? { selectedPlan: `plan_${selected + 1}` } : {}) };
+}
