@@ -6,7 +6,9 @@ export const commercialKnowledge = {
   deadline: "A instalação ocorre em até 1 dia útil após a aprovação da contratação, condicionada à disponibilidade técnica e à confirmação do agendamento.",
   approval: "Aprovação cadastral, disponibilidade técnica e instalação realizada são etapas diferentes. Registrar a solicitação não significa que ela foi aprovada.",
   wifi: "Wi-Fi 5 e Wi-Fi 6 são tecnologias do roteador. O Wi-Fi 6 pode oferecer melhor eficiência com vários aparelhos compatíveis. O desempenho depende dos aparelhos, da distância, de interferências e da rede. A velocidade nominal do plano não é garantida em todos os aparelhos por Wi-Fi.",
+  wirelessRange: "O alcance sem fio depende da potência, das antenas, dos aparelhos, do padrão usado e dos obstáculos. Bluetooth e Wi-Fi podem usar a faixa de 2,4 GHz; uma frequência maior não garante mais alcance. Não existe um limite único de distância válido para todos os aparelhos Bluetooth.",
   mobile: "O 5G do chip é a rede móvel; não é a mesma coisa que Wi-Fi de 5 GHz. Seu uso depende da cobertura móvel e de um aparelho compatível. A franquia do chip é a cadastrada no plano.",
+  customerData: "O nome completo da mãe é um dos dados coletados para a solicitação e análise do cadastro.",
   security: "Sou a assistente virtual da Click Hubnet. Os dados são usados para a solicitação e análise do cadastro. Você pode pedir atendimento humano. Não solicitamos senhas bancárias, códigos de verificação ou pagamento antecipado.",
 };
 

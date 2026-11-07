@@ -22,13 +22,40 @@ export function safeInterpretation(value: unknown, message: string, context?: Co
       if (typeof source === "string" && source.length <= 240 && message.includes(source)) evidence[key] = source;
     }
   }
-  const rawReply = typeof v.reply === "string" ? v.reply.slice(0, 1800) : "";
-  // Structured fact selection also survives a model paraphrase that fails validation.
-  const factKeys = context && Array.isArray(v.factKeys) ? [...new Set(v.factKeys.filter((key): key is string => typeof key === "string" && Object.hasOwn(context.facts, key)))].slice(0, 4) : [];
-  const trustedAnswer = context && ["question", "recommendation"].includes(String(v.intent)) ? factKeys.map(key => context.facts[key]).join("\n\n") : "";
-  const reply = context ? renderConversationReply(rawReply, context) || trustedAnswer : rawReply;
-  return { intent: v.intent as ConversationInterpretation["intent"], tone: v.tone as ConversationInterpretation["tone"],
+  const segments = Array.isArray(v.segments) ? v.segments.slice(0, 12) as Array<Record<string, unknown>> : null;
+  const requestedKeys = segments ? segments.filter(part => part?.kind === "fact").map(part => part.factKey) : Array.isArray(v.factKeys) ? v.factKeys : [];
+  const factKeys = context ? [...new Set(requestedKeys.filter((key): key is string => typeof key === "string" && Object.hasOwn(context.facts, key)))].slice(0, 4) : [];
+  const usefulKeys = factKeys.filter(key => !factKeys.some(other => other !== key && context!.facts[other].includes(context!.facts[key]) && (context!.facts[other].length > context!.facts[key].length || factKeys.indexOf(other) < factKeys.indexOf(key))));
+  const renderedFactKeys = new Set<string>();
+  const rawReply = segments ? segments.map(part => {
+    if (part?.kind === "fact") {
+      const key = String(part.factKey);
+      if (!usefulKeys.includes(key) || renderedFactKeys.has(key)) return "";
+      renderedFactKeys.add(key);
+      return `{{fato:${key}}}`;
+    }
+    return part?.kind === "text" && typeof part.text === "string" ? cleanConversationText(part.text) : "";
+  }).filter(Boolean).join(" ") : cleanConversationText(typeof v.reply === "string" ? v.reply.slice(0, 1800) : "");
+  // A model may answer a question correctly but label it 'data'. A factual
+  // explanation is conversational, never a bare customer-field submission.
+  const intent = v.intent === "data" && (factKeys.length || (v.answerDomain === "general" && Boolean(rawReply))) ? "question" : v.intent as ConversationInterpretation["intent"];
+  const trustedAnswer = context && ["question", "recommendation"].includes(String(intent)) ? usefulKeys.map(key => context.facts[key]).join("\n\n") : "";
+  const candidateTopic = v.answerDomain !== "general" && typeof v.unconfirmedTopic === "string" ? v.unconfirmedTopic.trim().slice(0, 100) : "";
+  const topicWords = normalized(candidateTopic).split(" ").filter(word => word && !["a", "o", "as", "os", "um", "uma", "de", "do", "da", "dos", "das", "com", "plano", "opcao"].includes(word));
+  const selectedFacts = normalized(usefulKeys.map(key => context!.facts[key]).join(" "));
+  const topicCovered = topicWords.length > 0 && usefulKeys.length > 0 && topicWords.every(word => selectedFacts.split(" ").includes(word));
+  const topic = topicCovered ? "" : candidateTopic;
+  const literalTopic = topic && normalized(topic) && normalized(message).includes(normalized(topic)) && !/[\d][\d.\-/ ]{7,}[\d]|https?:|@|token|senha|apikey/i.test(topic) ? topic : "essa informação";
+  const reply = context && topic ? `Sobre ${literalTopic}: essa informação não está confirmada no catálogo da ${context.operator}.` : context ? renderConversationReply(rawReply, context) || trustedAnswer : rawReply;
+  return { intent: topic ? "question" : intent, tone: v.tone as ConversationInterpretation["tone"],
     reply, ...(context ? { replyValidated: Boolean(reply) } : {}), evidence };
+}
+
+function cleanConversationText(text: string) {
+  return text
+    .replace(/[^.!?\n]*(?:pode|poderia|informe|envie|me diga|me fale|preciso|qual)[^.!?\n]*(?:cep|nome completo|cpf|e-mail|vencimento|data de nascimento)[^.!?\n]*[.!?]?/gi, "")
+    .replace(/(?:posso|poderia) (?:te |lhe )?ajudar (?:com |em )?mais[^.!?\n]*[.!?]?/gi, "")
+    .trim();
 }
 
 /** Free answers cannot introduce unverified commercial terms or claim backend actions. */

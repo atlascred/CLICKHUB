@@ -854,3 +854,39 @@ test('pergunta sem interrogação sobre plano não altera escolha do cliente',as
 test('dúvida implícita na correção de e-mail preserva o e-mail anterior',async()=>{
  const s=simulator('pergunta durante correção e-mail',{state:'CORRECTION',memory:{correctionField:'email',email:'cliente@example.invalid'},ai:conversationalAi('{{fato:advancePayment}}')});await s.say('e adesão');assert.equal(s.conversation.state,'CORRECTION');assert.equal((s.conversation.memory as any).email,'cliente@example.invalid');assert.ok(s.sends[0].includes('e-mail correto'));
 });
+
+test('resposta estruturada não repete benefícios nem a pergunta da etapa',()=>{
+ const context={...conversationContext({instance:'CLICK',plans}),nextQuestion:'Pode informar o CEP da instalação?'};
+ const result=safeInterpretation({intent:'question',tone:'neutral',segments:[{kind:'fact',factKey:'plan_2'},{kind:'fact',factKey:'plan_2_benefits'},{kind:'fact',factKey:'plan_2'},{kind:'text',text:'Para começar, pode me informar o CEP da instalação, por favor?'}],unconfirmedTopic:null,evidence:{}},'Essa opção tem o quê?',context);
+ assert.equal(result?.replyValidated,true);assert.equal(result?.reply.match(/CHIP 10 GB/g)?.length,1);assert.ok(!result?.reply.includes('CEP'));
+});
+test('pergunta sem interrogação classificada como dado usa os fatos e mantém etapa',async()=>{
+ const s=simulator('classificação contraditória',{state:'ASK_CEP',ai:{interpretConversation:async(input:any)=>safeInterpretation({intent:'data',tone:'neutral',segments:[{kind:'fact',factKey:'advancePayment'},{kind:'fact',factKey:'installation'}],unconfirmedTopic:null,evidence:{}},input.message,input.context)}});
+ await s.say('cobram pra ativar');assert.equal(s.conversation.state,'ASK_CEP');assert.ok(s.sends[0].includes('gratuita'));assert.ok(!s.sends[0].includes('Não consegui esclarecer'));
+});
+test('benefício não confirmado responde à pergunta e não anuncia plano alternativo',()=>{
+ const context=conversationContext({instance:'GIGA CLICK',plans});const result=safeInterpretation({intent:'question',tone:'uncertain',segments:[{kind:'fact',factKey:'plan_3'}],unconfirmedTopic:'Netflix',evidence:{}},'Tem Netflix de graça?',context);
+ assert.ok(result?.reply.includes('Netflix'));assert.ok(result?.reply.includes('não está confirmada'));assert.ok(!result?.reply.includes('85,00'));assert.ok(!result?.reply.includes('Globoplay'));
+});
+test('OpenAI usa segmentos estruturados e não recebe a pergunta pendente para repetir',async()=>{
+ let payload:any;const context={...conversationContext({instance:'CLICK',plans}),nextQuestion:'Agora me informe o CPF.'};
+ const ai=new OpenAiService(async()=>({apiKey:'fake',model:'gpt-4o-mini'}),(()=>({responses:{create:async(p:any)=>{payload=p;return{output_text:JSON.stringify({intent:'question',tone:'neutral',segments:[{kind:'fact',factKey:'installation'}],unconfirmedTopic:null,evidence:{}})};}}})) as any);
+ const result=await ai.interpretConversation({message:'Tem adesão?',state:'ASK_DOCUMENT',history:[],context});assert.ok(result?.reply.includes('gratuita'));assert.ok(payload.text.format.schema.properties.segments.items.anyOf);assert.equal(JSON.parse(payload.input).context.nextQuestion,undefined);
+});
+
+test('conceito geral não é tratado como condição ausente no catálogo',()=>{
+ const context=conversationContext({instance:'CLICK',plans});const result=safeInterpretation({intent:'question',tone:'neutral',answerDomain:'general',segments:[{kind:'text',text:'Download recebe dados; upload envia dados.'}],unconfirmedTopic:'download e upload',evidence:{}},'Qual a diferença entre download e upload?',context);
+ assert.equal(result?.reply,'Download recebe dados; upload envia dados.');assert.ok(!result?.reply.includes('catálogo'));
+});
+test('finalidade do nome da mãe usa fato cadastral e não inventa valor de campo',()=>{
+ const context=conversationContext({instance:'GIGA CLICK',plans});const result=safeInterpretation({intent:'data',tone:'neutral',answerDomain:'customer_data',segments:[{kind:'fact',factKey:'customerData'}],unconfirmedTopic:null,evidence:{motherName:'Maria Inventada'}},'Por que precisa do nome da mãe?',context);
+ assert.equal(result?.intent,'question');assert.ok(result?.reply.includes('análise do cadastro'));assert.ok(!result?.evidence.motherName);
+});
+
+test('fato válido prevalece sobre sinalização contraditória de plano desconhecido',()=>{
+ const context=conversationContext({instance:'CLICK',plans});const result=safeInterpretation({intent:'question',tone:'neutral',answerDomain:'catalog',segments:[{kind:'fact',factKey:'plan_2_benefits'}],unconfirmedTopic:'plano de 800',evidence:{}},'Queria saber se o plano de 800 vem com chip',context);assert.ok(result?.reply.includes('CHIP 10 GB'));assert.ok(!result?.reply.includes('não está confirmada'));
+});
+
+test('explicação técnica usa referência sobre alcance sem confundir frequência e distância',()=>{
+ const context=conversationContext({instance:'CLICK',plans});const result=safeInterpretation({intent:'question',tone:'neutral',answerDomain:'general',segments:[{kind:'fact',factKey:'wirelessRange'}],unconfirmedTopic:null,evidence:{}},'Por que o Bluetooth costuma alcançar menos que o Wi-Fi?',context);assert.ok(result?.reply.includes('uma frequência maior não garante mais alcance'));assert.ok(result?.reply.includes('2,4 GHz'));assert.ok(!result?.reply.includes('10 metros'));
+});
