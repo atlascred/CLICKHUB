@@ -46,7 +46,7 @@ test('campanha oficial normaliza números e rejeita contatos inválidos sem igno
  assert.throws(()=>campaignContacts('inválido'));
  assert.throws(()=>campaignContacts('5511900000000;inválido'));
  assert.throws(()=>campaignContacts(''));
- assert.throws(()=>campaignContacts(Array.from({length:101},(_,i)=>'55119'+String(i).padStart(8,'0')).join('\n')));
+ assert.throws(()=>campaignContacts(Array.from({length:10_001},(_,i)=>'55119'+String(i).padStart(8,'0')).join('\n')));
 });
 test('novas abas apontam para adaptadores; não importam automação Alfa',()=>{
  const ui=readFileSync('src/modules/conversas/components/conversation-center.tsx','utf8');

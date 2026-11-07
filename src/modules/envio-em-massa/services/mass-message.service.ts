@@ -1,12 +1,4 @@
-import { normalizePhone } from "@/services/validators";
-export function campaignContacts(text: string) {
-  if (typeof text !== "string" || text.length > 20_000) throw new Error("Informe até 100 contatos por campanha.");
-  const entries = text.split(/[\r\n;,]+/).map(v => v.trim()).filter(Boolean);
-  if (entries.some(v => !/^55\d{10,11}$/.test(normalizePhone(v)))) throw new Error("Há números inválidos. Use DDD e número, um contato por linha.");
-  const contacts = [...new Set(entries.map(normalizePhone))];
-  if (!contacts.length || contacts.length > 100) throw new Error("Informe de 1 a 100 contatos por campanha.");
-  return contacts;
-}
+export { campaignContacts } from "../lib/campaign-contacts";
 export type RecipientStatus = "queued" | "sending" | "accepted" | "delivered" | "read" | "failed" | "uncertain";
 export type Campaign = { id: string; ownerId: string; phoneNumberId: string; fingerprint: string; createdAt: string; mode?: "text" | "template"; title?: string; ownerName?: string; messageBody?: string; isTest?: boolean; template: any; recipients: Array<{ phone: string; status: RecipientStatus; messageId?: string; detail?: string; startedAt?: string; processedAt?: string; deliveredAt?: string; readAt?: string; failedAt?: string }> };
 export interface CampaignStore {

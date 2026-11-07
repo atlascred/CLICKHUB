@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 import { buildTemplatePayload, templateUnsupportedReason, type OfficialTemplate } from '../src/modules/envio-em-massa/lib/templates';
-import { MassMessageService, type Campaign, type CampaignStore } from '../src/modules/envio-em-massa/services/mass-message.service';
+import { campaignContacts, MassMessageService, type Campaign, type CampaignStore } from '../src/modules/envio-em-massa/services/mass-message.service';
 import { MetaRequestError, OfficialMetaClient, officialMetaReadiness } from '../src/modules/envio-em-massa/services/official-meta.service';
 import { isValidMetaWebhook } from '../src/services/meta-whatsapp';
 const template: OfficialTemplate = { id: 't1', name: 'oferta', language: 'pt_BR', status: 'APPROVED', components: [{ type: 'BODY', text: 'Olá {{1}}, oferta {{2}}' }] };
@@ -111,4 +111,18 @@ test('typing oficial marca recebido como lido com indicador nativo e timeout cur
   assert.equal(await new OfficialMetaClient(async()=>{throw Error('offline');}).typing('wamid.inbound'),false);
   assert.equal(await new OfficialMetaClient(async()=>Response.json({error:{code:100}},{status:400})).typing('wamid.inbound'),false);
  }finally{keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
+});
+
+test('campanha oficial aceita 10 mil contatos únicos e rejeita excesso sem cortar a lista',()=>{
+ const phones=Array.from({length:10_001},(_,i)=>'55119'+String(i).padStart(8,'0'));
+ assert.equal(campaignContacts(phones.slice(0,101).join('\n')).length,101);
+ const all=campaignContacts(phones.slice(0,10_000).join('\n'));assert.equal(all.length,10_000);assert.equal(all.at(-1),phones[9999]);
+ assert.throws(()=>campaignContacts(phones.join('\n')),/10\.000/);
+ assert.equal(campaignContacts([...all,...all].join('\n')).length,10_000);
+});
+test('contagem oficial remove formatos repetidos e não ignora números inválidos',()=>{
+ assert.deepEqual(campaignContacts('+55 (11) 90000-0000;11900000000\r\n5511900000000'),['5511900000000']);
+ assert.throws(()=>campaignContacts('5511900000000\ninválido'),/inválidos/);
+ assert.throws(()=>campaignContacts(''),/1 a 10\.000/);
+ assert.throws(()=>campaignContacts(' '.repeat(1_000_001)),/lista de contatos está muito grande/);
 });
